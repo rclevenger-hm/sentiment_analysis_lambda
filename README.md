@@ -1,79 +1,108 @@
-# AWS Lambda Terraform - Text Sentiment Analysis
+# AWS Lambda Sentiment Analysis
 
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-
-Welcome to the AWS Lambda Terraform project for Text Sentiment Analysis! This project demonstrates how to deploy an AWS Lambda function using Terraform to perform text sentiment analysis.
-
-## Introduction
-
-This project provides an example implementation of a serverless text sentiment analysis application using AWS Lambda and Terraform. The Lambda function uses AWS Comprehend to analyze the sentiment of text data provided through an API Gateway endpoint.
+A small serverless API that accepts text over HTTP, analyzes it with Amazon Comprehend, and returns the detected sentiment and confidence scores. Terraform provisions the Lambda function, IAM permissions, API Gateway REST API, deployment, and stage.
 
 ## Architecture
 
-The architecture of the project is as follows:
+`POST /analyze-sentiment` -> API Gateway -> AWS Lambda -> Amazon Comprehend
 
-1. The Lambda function is responsible for handling incoming text data and passing it to the AWS Comprehend service for sentiment analysis.
+The Lambda runs on Node.js 24 and uses the AWS SDK for JavaScript v3 included with the managed Lambda runtime.
 
-2. The API Gateway serves as the entry point for incoming HTTP requests and triggers the Lambda function.
+## Requirements
 
-## Prerequisites
+- Node.js 24 or newer for local tests
+- Terraform 1.6 or newer
+- AWS credentials with permission to create Lambda, IAM, API Gateway, and related resources
+- Docker or Docker Compose only if you want to exercise the Lambda container locally
 
-Before getting started, ensure you have the following:
+## Test locally
 
-- An AWS account with appropriate permissions to create Lambda functions and API Gateway resources.
-
-- Terraform installed on your local machine. You can download Terraform from the official website: https://www.terraform.io/downloads.html
-
-## Getting Started
-
-1. Clone this repository to your local machine.
-
-2. Navigate to the `terraform/` directory:
-
-   ```
-   cd terraform/
-   ```
-
-3. Create a file named `config.json` and set the desired AWS region:
-
-   ```json
-   {
-     "region": "us-east-1"
-   }
-   ```
-
-4. Initialize Terraform:
-
-   ```
-   terraform init
-   ```
-
-5. Deploy the Lambda function and API Gateway:
-
-   ```
-   terraform apply
-   ```
-
-6. After the deployment is complete, you will receive the API Gateway endpoint URL.
-
-## Usage
-
-To perform text sentiment analysis, make a POST request to the API Gateway endpoint with the text data in the request body. The Lambda function will analyze the sentiment and return the result in the response.
-
-Example POST request using cURL:
+No npm dependencies are required for the unit tests.
 
 ```bash
-curl -X POST -H "Content-Type: application/json" -d '{"text": "I love this product! It's amazing."}' <API_Gateway_URL>
+npm test
+npm run lint
 ```
+
+The tests cover successful sentiment detection, language selection, invalid JSON, missing input, oversized input, unsupported languages, and upstream Comprehend failures.
+
+## Deploy with Terraform
+
+```bash
+cd terraform
+terraform init
+terraform plan -var="aws_region=us-east-1" -var="stage_name=prod"
+terraform apply -var="aws_region=us-east-1" -var="stage_name=prod"
+```
+
+Terraform prints `api_endpoint_url` after a successful apply.
+
+## Call the API
+
+```bash
+curl -X POST \
+  -H 'Content-Type: application/json' \
+  -d '{"text":"I love this product!"}' \
+  "$(terraform -chdir=terraform output -raw api_endpoint_url)"
+```
+
+Example response:
+
+```json
+{
+  "sentiment": "POSITIVE",
+  "sentimentScore": {
+    "Positive": 0.99,
+    "Negative": 0.001,
+    "Neutral": 0.009,
+    "Mixed": 0
+  }
+}
+```
+
+You can optionally send `languageCode`; it defaults to `en`.
+
+```json
+{
+  "text": "Me gusta este producto",
+  "languageCode": "es"
+}
+```
+
+## Run the Lambda container locally
+
+The Docker image uses the official AWS Lambda Node.js base image. Export AWS credentials that are allowed to call Comprehend, then run:
+
+```bash
+docker compose up --build
+```
+
+Invoke the local Lambda runtime endpoint:
+
+```bash
+curl -X POST \
+  -H 'Content-Type: application/json' \
+  -d '{"body":"{\"text\":\"I love this product!\"}"}' \
+  http://localhost:9000/2015-03-31/functions/function/invocations
+```
+
+## GitHub Actions
+
+`CI` runs on pushes to `dev` and `main` and on pull requests to `main`. It checks JavaScript syntax, runs the unit tests, validates/formats Terraform, and verifies the Lambda container builds.
+
+`Deploy to AWS` is a manual workflow. Add these repository secrets before using it:
+
+- `AWS_ACCESS_KEY_ID`
+- `AWS_SECRET_ACCESS_KEY`
+
+Then run the workflow and choose the AWS region and API Gateway stage.
 
 ## Cleanup
 
-To remove the resources created by Terraform:
-
-```
-terraform destroy
+```bash
+terraform -chdir=terraform destroy
 ```
 
 ## License
 
-The code in this project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+MIT. See [LICENSE](LICENSE).

@@ -1,12 +1,11 @@
-version: '3'
 services:
-  sentiment_analysis_lambda:
-    build:
-      context: .
-      dockerfile: Dockerfile
+  sentiment-analysis:
+    build: .
     ports:
-      - "3000:3000"
+      - "9000:8080"
     environment:
-      - HANDLER_FILE=handler.js
-      - HANDLER_FUNCTION=analyzeSentiment
-      - AWS_REGION=us-east-1
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      AWS_DEFAULT_REGION: ${AWS_REGION:-us-east-1}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}

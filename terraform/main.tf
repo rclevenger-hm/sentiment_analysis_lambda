@@ -1,14 +1,40 @@
-locals {
-  region = try(file("${path.module}/config.json"), null) != null ? jsondecode(file("${path.module}/config.json")).region : "us-east-1"
+terraform {
+  required_version = ">= 1.6.0"
+
+  required_providers {
+    archive = {
+      source  = "hashicorp/archive"
+      version = ">= 2.4.0"
+    }
+    aws = {
+      source  = "hashicorp/aws"
+      version = ">= 5.0"
+    }
+  }
 }
 
 provider "aws" {
-  region = local.region
+  region = var.aws_region
 }
 
-# IAM Role for Lambda
-resource "aws_iam_role" "lambda_role" {
-  name = "lambda-text-sentiment-role"
+locals {
+  name = "${var.project_name}-${var.stage_name}"
+
+  common_tags = {
+    Application = var.project_name
+    Environment = var.stage_name
+    ManagedBy   = "Terraform"
+  }
+}
+
+data "archive_file" "lambda" {
+  type        = "zip"
+  source_file = "${path.module}/../lambda_function/handler.js"
+  output_path = "${path.module}/lambda_function.zip"
+}
+
+resource "aws_iam_role" "lambda" {
+  name = "${local.name}-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -22,21 +48,24 @@ resource "aws_iam_role" "lambda_role" {
       }
     ]
   })
+
+  tags = local.common_tags
 }
 
-# IAM Policy for Lambda
-resource "aws_iam_policy" "lambda_policy" {
-  name        = "lambda-text-sentiment-policy"
-  description = "Policy for the Lambda function to access Comprehend"
+resource "aws_iam_role_policy_attachment" "lambda_basic_execution" {
+  role       = aws_iam_role.lambda.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+resource "aws_iam_role_policy" "comprehend" {
+  name = "${local.name}-comprehend"
+  role = aws_iam_role.lambda.id
 
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
       {
-        Action   = [
-          "comprehend:DetectSentiment",
-          "comprehend:BatchDetectSentiment"
-        ]
+        Action   = "comprehend:DetectSentiment"
         Effect   = "Allow"
         Resource = "*"
       }
@@ -44,77 +73,79 @@ resource "aws_iam_policy" "lambda_policy" {
   })
 }
 
-# Attach the policy to the Lambda role
-resource "aws_iam_role_policy_attachment" "lambda_policy_attachment" {
-  policy_arn = aws_iam_policy.lambda_policy.arn
-  role       = aws_iam_role.lambda_role.name
+resource "aws_lambda_function" "sentiment" {
+  function_name    = local.name
+  description      = "Analyzes text sentiment with Amazon Comprehend"
+  filename         = data.archive_file.lambda.output_path
+  source_code_hash = data.archive_file.lambda.output_base64sha256
+  handler          = "handler.analyzeSentiment"
+  role             = aws_iam_role.lambda.arn
+  runtime          = "nodejs24.x"
+  memory_size      = 256
+  timeout          = 10
+
+  tags = local.common_tags
 }
 
-# Lambda Function
-resource "aws_lambda_function" "text_sentiment_lambda" {
-  function_name = "text-sentiment-analysis-lambda"
-  role          = aws_iam_role.lambda_role.arn
-  runtime       = "nodejs14.x"
-  handler       = "handler.analyzeSentiment"
-  filename      = "../handler.js"
+resource "aws_api_gateway_rest_api" "sentiment" {
+  name        = "${local.name}-api"
+  description = "HTTP API for sentiment analysis"
 
-  tags = {
-    app_name     = "TextSentimentApp"
-    region       = local.region
-    service_type = "lambda"
-  }
+  tags = local.common_tags
 }
 
-# API Gateway
-resource "aws_api_gateway_rest_api" "text_sentiment_api" {
-  name        = "text-sentiment-analysis-api"
-  description = "API Gateway for text sentiment analysis"
-
-  tags = {
-    app_name     = "TextSentimentApp"
-    region       = local.region
-    service_type = "api_gateway"
-  }
-}
-
-resource "aws_api_gateway_resource" "text_sentiment_api_resource" {
-  rest_api_id = aws_api_gateway_rest_api.text_sentiment_api.id
-  parent_id   = aws_api_gateway_rest_api.text_sentiment_api.root_resource_id
+resource "aws_api_gateway_resource" "analyze_sentiment" {
+  rest_api_id = aws_api_gateway_rest_api.sentiment.id
+  parent_id   = aws_api_gateway_rest_api.sentiment.root_resource_id
   path_part   = "analyze-sentiment"
 }
 
-resource "aws_api_gateway_method" "text_sentiment_api_method" {
-  rest_api_id   = aws_api_gateway_rest_api.text_sentiment_api.id
-  resource_id   = aws_api_gateway_resource.text_sentiment_api_resource.id
+resource "aws_api_gateway_method" "post" {
+  rest_api_id   = aws_api_gateway_rest_api.sentiment.id
+  resource_id   = aws_api_gateway_resource.analyze_sentiment.id
   http_method   = "POST"
   authorization = "NONE"
 }
 
-resource "aws_api_gateway_integration" "text_sentiment_api_integration" {
-  rest_api_id             = aws_api_gateway_rest_api.text_sentiment_api.id
-  resource_id             = aws_api_gateway_resource.text_sentiment_api_resource.id
-  http_method             = aws_api_gateway_method.text_sentiment_api_method.http_method
+resource "aws_api_gateway_integration" "lambda" {
+  rest_api_id             = aws_api_gateway_rest_api.sentiment.id
+  resource_id             = aws_api_gateway_resource.analyze_sentiment.id
+  http_method             = aws_api_gateway_method.post.http_method
   integration_http_method = "POST"
   type                    = "AWS_PROXY"
-  uri                     = aws_lambda_function.text_sentiment_lambda.invoke_arn
+  uri                     = aws_lambda_function.sentiment.invoke_arn
 }
 
-resource "aws_api_gateway_method_response" "text_sentiment_api_method_response" {
-  rest_api_id = aws_api_gateway_rest_api.text_sentiment_api.id
-  resource_id = aws_api_gateway_resource.text_sentiment_api_resource.id
-  http_method = aws_api_gateway_method.text_sentiment_api_method.http_method
-
-  response_models = {
-    "application/json" = "Empty"
-  }
+resource "aws_lambda_permission" "api_gateway" {
+  statement_id  = "AllowExecutionFromApiGateway"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.sentiment.function_name
+  principal     = "apigateway.amazonaws.com"
+  source_arn    = "${aws_api_gateway_rest_api.sentiment.execution_arn}/*/*"
 }
 
-resource "aws_api_gateway_integration_response" "text_sentiment_api_integration_response" {
-  rest_api_id = aws_api_gateway_rest_api.text_sentiment_api.id
-  resource_id = aws_api_gateway_resource.text_sentiment_api_resource.id
-  http_method = aws_api_gateway_method.text_sentiment_api_method.http_method
+resource "aws_api_gateway_deployment" "sentiment" {
+  rest_api_id = aws_api_gateway_rest_api.sentiment.id
 
-  response_templates = {
-    "application/json" = ""
+  triggers = {
+    redeployment = sha1(jsonencode([
+      aws_api_gateway_resource.analyze_sentiment.id,
+      aws_api_gateway_method.post.id,
+      aws_api_gateway_integration.lambda.id,
+    ]))
   }
+
+  lifecycle {
+    create_before_destroy = true
+  }
+
+  depends_on = [aws_api_gateway_integration.lambda]
+}
+
+resource "aws_api_gateway_stage" "sentiment" {
+  deployment_id = aws_api_gateway_deployment.sentiment.id
+  rest_api_id   = aws_api_gateway_rest_api.sentiment.id
+  stage_name    = var.stage_name
+
+  tags = local.common_tags
 }
