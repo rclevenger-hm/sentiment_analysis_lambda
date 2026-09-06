@@ -4,8 +4,9 @@
   "private": true,
   "description": "AWS Lambda sentiment analysis API backed by Amazon Comprehend",
   "scripts": {
-    "lint": "node --check lambda_function/handler.js && node --check tests/handler.test.js",
-    "test": "node --test"
+    "lint": "node --check lambda_function/handler.js && node --check tests/handler.test.js && node --check scripts/smoke-test.mjs",
+    "test": "node --test",
+    "smoke": "node scripts/smoke-test.mjs"
   },
   "engines": {
     "node": ">=24"

@@ -1,0 +1,93 @@
+openapi: 3.0.3
+info:
+  title: Sentiment Analysis API
+  version: 1.0.0
+  description: HTTP API backed by AWS Lambda and Amazon Comprehend DetectSentiment.
+servers:
+  - url: https://{apiId}.execute-api.{region}.amazonaws.com/{stage}
+    variables:
+      apiId:
+        default: YOUR_API_ID
+      region:
+        default: us-east-1
+      stage:
+        default: prod
+paths:
+  /analyze-sentiment:
+    post:
+      summary: Analyze text sentiment
+      operationId: analyzeSentiment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SentimentRequest'
+      responses:
+        '200':
+          description: Sentiment detected successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SentimentResponse'
+        '400':
+          description: Invalid JSON, empty text, or unsupported language
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '413':
+          description: Text exceeds the 5 KB Amazon Comprehend limit
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '502':
+          description: Amazon Comprehend could not service the request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+components:
+  schemas:
+    SentimentRequest:
+      type: object
+      required:
+        - text
+      properties:
+        text:
+          type: string
+          minLength: 1
+          description: UTF-8 input text, maximum 5 KB.
+          example: I love this product!
+        languageCode:
+          type: string
+          default: en
+          enum: [ar, de, en, es, fr, hi, it, ja, ko, pt, zh, zh-TW]
+    SentimentResponse:
+      type: object
+      required:
+        - sentiment
+        - sentimentScore
+      properties:
+        sentiment:
+          type: string
+          enum: [POSITIVE, NEGATIVE, NEUTRAL, MIXED]
+        sentimentScore:
+          type: object
+          properties:
+            Positive:
+              type: number
+            Negative:
+              type: number
+            Neutral:
+              type: number
+            Mixed:
+              type: number
+    ErrorResponse:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string

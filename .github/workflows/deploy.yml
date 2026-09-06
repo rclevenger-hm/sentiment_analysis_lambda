@@ -13,13 +13,18 @@ on:
         required: true
         default: prod
         type: string
+      cors_allowed_origin:
+        description: Browser origin allowed by CORS (* or https://your-app.example)
+        required: true
+        default: '*'
+        type: string
 
 permissions:
   contents: read
 
 jobs:
   deploy:
-    name: Terraform apply
+    name: Terraform apply and smoke test
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -44,6 +49,7 @@ jobs:
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: '1.13.3'
+          terraform_wrapper: false
 
       - name: Terraform init
         run: terraform -chdir=terraform init
@@ -56,3 +62,23 @@ jobs:
           terraform -chdir=terraform apply -auto-approve
           -var="aws_region=${{ inputs.aws_region }}"
           -var="stage_name=${{ inputs.stage_name }}"
+          -var="cors_allowed_origin=${{ inputs.cors_allowed_origin }}"
+
+      - name: Capture deployed endpoint
+        id: endpoint
+        run: echo "url=$(terraform -chdir=terraform output -raw api_endpoint_url)" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke test deployed API
+        env:
+          API_ENDPOINT: ${{ steps.endpoint.outputs.url }}
+        run: npm run smoke
+
+      - name: Deployment summary
+        env:
+          API_ENDPOINT: ${{ steps.endpoint.outputs.url }}
+        run: |
+          echo "## Sentiment API deployment" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Endpoint: \`$API_ENDPOINT\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Deployment and live Comprehend smoke test passed." >> "$GITHUB_STEP_SUMMARY"

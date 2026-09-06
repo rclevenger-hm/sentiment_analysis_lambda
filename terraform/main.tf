@@ -73,6 +73,13 @@ resource "aws_iam_role_policy" "comprehend" {
   })
 }
 
+resource "aws_cloudwatch_log_group" "lambda" {
+  name              = "/aws/lambda/${local.name}"
+  retention_in_days = var.log_retention_days
+
+  tags = local.common_tags
+}
+
 resource "aws_lambda_function" "sentiment" {
   function_name    = local.name
   description      = "Analyzes text sentiment with Amazon Comprehend"
@@ -83,6 +90,18 @@ resource "aws_lambda_function" "sentiment" {
   runtime          = "nodejs24.x"
   memory_size      = 256
   timeout          = 10
+
+  environment {
+    variables = {
+      ALLOWED_ORIGIN = var.cors_allowed_origin
+    }
+  }
+
+  depends_on = [
+    aws_cloudwatch_log_group.lambda,
+    aws_iam_role_policy.comprehend,
+    aws_iam_role_policy_attachment.lambda_basic_execution,
+  ]
 
   tags = local.common_tags
 }
@@ -116,6 +135,52 @@ resource "aws_api_gateway_integration" "lambda" {
   uri                     = aws_lambda_function.sentiment.invoke_arn
 }
 
+resource "aws_api_gateway_method" "options" {
+  rest_api_id   = aws_api_gateway_rest_api.sentiment.id
+  resource_id   = aws_api_gateway_resource.analyze_sentiment.id
+  http_method   = "OPTIONS"
+  authorization = "NONE"
+}
+
+resource "aws_api_gateway_integration" "options" {
+  rest_api_id = aws_api_gateway_rest_api.sentiment.id
+  resource_id = aws_api_gateway_resource.analyze_sentiment.id
+  http_method = aws_api_gateway_method.options.http_method
+  type        = "MOCK"
+
+  request_templates = {
+    "application/json" = jsonencode({ statusCode = 200 })
+  }
+}
+
+resource "aws_api_gateway_method_response" "options" {
+  rest_api_id = aws_api_gateway_rest_api.sentiment.id
+  resource_id = aws_api_gateway_resource.analyze_sentiment.id
+  http_method = aws_api_gateway_method.options.http_method
+  status_code = "200"
+
+  response_parameters = {
+    "method.response.header.Access-Control-Allow-Headers" = true
+    "method.response.header.Access-Control-Allow-Methods" = true
+    "method.response.header.Access-Control-Allow-Origin"  = true
+  }
+}
+
+resource "aws_api_gateway_integration_response" "options" {
+  rest_api_id = aws_api_gateway_rest_api.sentiment.id
+  resource_id = aws_api_gateway_resource.analyze_sentiment.id
+  http_method = aws_api_gateway_method.options.http_method
+  status_code = aws_api_gateway_method_response.options.status_code
+
+  response_parameters = {
+    "method.response.header.Access-Control-Allow-Headers" = "'Content-Type'"
+    "method.response.header.Access-Control-Allow-Methods" = "'OPTIONS,POST'"
+    "method.response.header.Access-Control-Allow-Origin"  = "'${var.cors_allowed_origin}'"
+  }
+
+  depends_on = [aws_api_gateway_integration.options]
+}
+
 resource "aws_lambda_permission" "api_gateway" {
   statement_id  = "AllowExecutionFromApiGateway"
   action        = "lambda:InvokeFunction"
@@ -128,18 +193,24 @@ resource "aws_api_gateway_deployment" "sentiment" {
   rest_api_id = aws_api_gateway_rest_api.sentiment.id
 
   triggers = {
-    redeployment = sha1(jsonencode([
-      aws_api_gateway_resource.analyze_sentiment.id,
-      aws_api_gateway_method.post.id,
-      aws_api_gateway_integration.lambda.id,
-    ]))
+    redeployment = sha1(jsonencode({
+      resource_id            = aws_api_gateway_resource.analyze_sentiment.id
+      post_method_id         = aws_api_gateway_method.post.id
+      post_integration_id    = aws_api_gateway_integration.lambda.id
+      options_method_id      = aws_api_gateway_method.options.id
+      options_integration_id = aws_api_gateway_integration.options.id
+      cors_allowed_origin    = var.cors_allowed_origin
+    }))
   }
 
   lifecycle {
     create_before_destroy = true
   }
 
-  depends_on = [aws_api_gateway_integration.lambda]
+  depends_on = [
+    aws_api_gateway_integration.lambda,
+    aws_api_gateway_integration_response.options,
+  ]
 }
 
 resource "aws_api_gateway_stage" "sentiment" {

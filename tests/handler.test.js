@@ -39,13 +39,15 @@ function createTestHandler({ result, error } = {}) {
   };
 }
 
-test('returns sentiment and score for a valid request', async () => {
+test('returns sentiment, score, and CORS headers for a valid request', async () => {
   const { calls, handler } = createTestHandler();
   const response = await handler({
     body: JSON.stringify({ text: 'I love this product!' }),
   });
 
   assert.equal(response.statusCode, 200);
+  assert.equal(response.headers['access-control-allow-origin'], '*');
+  assert.equal(response.headers['access-control-allow-methods'], 'OPTIONS,POST');
   assert.deepEqual(JSON.parse(response.body), {
     sentiment: 'POSITIVE',
     sentimentScore: {
@@ -61,6 +63,28 @@ test('returns sentiment and score for a valid request', async () => {
       Text: 'I love this product!',
     },
   ]);
+});
+
+test('uses the configured CORS origin', async () => {
+  const originalOrigin = process.env.ALLOWED_ORIGIN;
+  process.env.ALLOWED_ORIGIN = 'https://example.com';
+
+  try {
+    const { handler } = createTestHandler();
+    const response = await handler({
+      body: JSON.stringify({ text: 'hello' }),
+    });
+    assert.equal(
+      response.headers['access-control-allow-origin'],
+      'https://example.com',
+    );
+  } finally {
+    if (originalOrigin === undefined) {
+      delete process.env.ALLOWED_ORIGIN;
+    } else {
+      process.env.ALLOWED_ORIGIN = originalOrigin;
+    }
+  }
 });
 
 test('accepts a supported languageCode', async () => {

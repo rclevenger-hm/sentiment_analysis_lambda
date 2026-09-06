@@ -20,3 +20,15 @@ variable "stage_name" {
     error_message = "stage_name may contain only letters, numbers, underscores, and hyphens."
   }
 }
+
+variable "cors_allowed_origin" {
+  description = "Browser origin allowed by CORS. Use * for development or a specific https:// origin for production."
+  type        = string
+  default     = "*"
+}
+
+variable "log_retention_days" {
+  description = "CloudWatch Logs retention period for Lambda logs"
+  type        = number
+  default     = 14
+}
