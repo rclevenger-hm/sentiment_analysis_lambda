@@ -16,14 +16,19 @@ const SUPPORTED_LANGUAGE_CODES = new Set([
   'zh-TW',
 ]);
 
-const JSON_HEADERS = {
-  'content-type': 'application/json; charset=utf-8',
-};
+function responseHeaders() {
+  return {
+    'content-type': 'application/json; charset=utf-8',
+    'access-control-allow-origin': process.env.ALLOWED_ORIGIN || '*',
+    'access-control-allow-methods': 'OPTIONS,POST',
+    'access-control-allow-headers': 'Content-Type',
+  };
+}
 
 function jsonResponse(statusCode, body) {
   return {
     statusCode,
-    headers: JSON_HEADERS,
+    headers: responseHeaders(),
     body: JSON.stringify(body),
   };
 }

@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sentiment API browser example</title>
+</head>
+<body>
+  <main>
+    <h1>Sentiment API browser example</h1>
+    <label>
+      API endpoint
+      <input id="endpoint" size="90" placeholder="https://.../prod/analyze-sentiment">
+    </label>
+    <br><br>
+    <label>
+      Text
+      <textarea id="text" rows="5" cols="80">I love this product!</textarea>
+    </label>
+    <br>
+    <button id="analyze">Analyze sentiment</button>
+    <pre id="result"></pre>
+  </main>
+  <script>
+    document.getElementById('analyze').addEventListener('click', async () => {
+      const endpoint = document.getElementById('endpoint').value.trim();
+      const text = document.getElementById('text').value;
+      const result = document.getElementById('result');
+
+      try {
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ text, languageCode: 'en' }),
+        });
+        const body = await response.json();
+        result.textContent = JSON.stringify({ status: response.status, body }, null, 2);
+      } catch (error) {
+        result.textContent = String(error);
+      }
+    });
+  </script>
+</body>
+</html>

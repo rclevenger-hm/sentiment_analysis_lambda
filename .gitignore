@@ -1,24 +1,65 @@
-# Node
-node_modules/
+# Logs
+logs
+*.log
 npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+.pnpm-debug.log*
 
-# Local environment
+# Diagnostic reports
+report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage
+coverage
+*.lcov
+.nyc_output
+
+# Dependency directories
+node_modules/
+jspm_packages/
+
+# Tool caches
+.npm
+.eslintcache
+.cache
+.parcel-cache
+.temp
+.next
+out
+.nuxt
+dist
+.docusaurus
+.serverless/
+.fusebox/
+.dynamodb/
+.tern-port
+.vscode-test
+
+# Environment files
 .env
-.env.*
-!.env.example
+.env.development.local
+.env.test.local
+.env.production.local
+.env.local
 
-# Terraform
-.terraform/
-*.tfstate
-*.tfstate.*
-*.tfplan
+# Yarn
+.yarn/cache
+.yarn/unplugged
+.yarn/build-state.yml
+.yarn/install-state.gz
+.pnp.*
+
+# Terraform local/generated files
+terraform/.terraform/
+terraform/*.tfstate
+terraform/*.tfstate.*
 terraform/lambda_function.zip
-.terraform.lock.hcl
-crash.log
-crash.*.log
-
-# IDE / OS
-.vscode/
-.idea/
-.DS_Store
-Thumbs.db
+terraform/crash.log
+terraform/crash.*.log

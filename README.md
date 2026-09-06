@@ -1,48 +1,39 @@
 # AWS Lambda Sentiment Analysis
 
-A small serverless API that accepts text over HTTP, analyzes it with Amazon Comprehend, and returns the detected sentiment and confidence scores. Terraform provisions the Lambda function, IAM permissions, API Gateway REST API, deployment, and stage.
+A deployable serverless sentiment-analysis API built with Amazon API Gateway, AWS Lambda, and Amazon Comprehend. It accepts text over HTTPS and returns the overall sentiment plus Comprehend confidence scores.
 
-## Architecture
+```text
+client -> API Gateway -> Lambda -> Amazon Comprehend
+                         |
+                         -> CloudWatch Logs
+```
 
-`POST /analyze-sentiment` -> API Gateway -> AWS Lambda -> Amazon Comprehend
+Terraform provisions the complete AWS path: IAM permissions, log group, Lambda, API Gateway route, CORS preflight, deployment, and stage. Amazon Comprehend is a managed AWS API, so there is no separate Comprehend server, model, database, or API key to configure.
 
-The Lambda runs on Node.js 24 and uses the AWS SDK for JavaScript v3 included with the managed Lambda runtime.
+## Quick start
 
-## Requirements
-
-- Node.js 24 or newer for local tests
-- Terraform 1.6 or newer
-- AWS credentials with permission to create Lambda, IAM, API Gateway, and related resources
-- Docker or Docker Compose only if you want to exercise the Lambda container locally
-
-## Test locally
-
-No npm dependencies are required for the unit tests.
+Requirements: AWS credentials, Terraform 1.6+, and Node.js 24+.
 
 ```bash
+aws sts get-caller-identity
 npm test
-npm run lint
+terraform -chdir=terraform init
+terraform -chdir=terraform plan
+terraform -chdir=terraform apply
 ```
 
-The tests cover successful sentiment detection, language selection, invalid JSON, missing input, oversized input, unsupported languages, and upstream Comprehend failures.
-
-## Deploy with Terraform
+Terraform prints the live endpoint as `api_endpoint_url`. Verify the entire deployed chain with a real Comprehend request:
 
 ```bash
-cd terraform
-terraform init
-terraform plan -var="aws_region=us-east-1" -var="stage_name=prod"
-terraform apply -var="aws_region=us-east-1" -var="stage_name=prod"
+API_ENDPOINT="$(terraform -chdir=terraform output -raw api_endpoint_url)" npm run smoke
 ```
 
-Terraform prints `api_endpoint_url` after a successful apply.
-
-## Call the API
+Or call it directly:
 
 ```bash
-curl -X POST \
+curl -sS -X POST \
   -H 'Content-Type: application/json' \
-  -d '{"text":"I love this product!"}' \
+  -d '{"text":"I love this product!","languageCode":"en"}' \
   "$(terraform -chdir=terraform output -raw api_endpoint_url)"
 ```
 
@@ -60,24 +51,48 @@ Example response:
 }
 ```
 
-You can optionally send `languageCode`; it defaults to `en`.
+## Documentation
 
-```json
-{
-  "text": "Me gusta este producto",
-  "languageCode": "es"
-}
+- [Deployment guide](docs/DEPLOYMENT.md) — AWS prerequisites, Terraform, GitHub Actions, CORS, and teardown.
+- [API reference](docs/API.md) — request/response contract, languages, limits, errors, and OpenAPI.
+- [Integration guide](docs/INTEGRATION.md) — Node.js, Python, browser, Postman, AWS-to-AWS, and production authentication options.
+- [Operations guide](docs/OPERATIONS.md) — smoke tests, CloudWatch logs, troubleshooting, security, and cost considerations.
+- [OpenAPI contract](openapi.yaml) — importable API definition for API tooling/client generation.
+
+Runnable clients are included in [`examples/`](examples/).
+
+## Required AWS services
+
+| Service | Purpose | Configuration in this repo |
+| --- | --- | --- |
+| API Gateway | Public HTTPS endpoint | Terraform creates route, stage, CORS preflight, and Lambda integration |
+| Lambda | Validates input and calls Comprehend | Terraform deploys Node.js 24 handler |
+| Amazon Comprehend | Performs sentiment inference | Lambda IAM role calls `DetectSentiment`; no resource/API key to create |
+| IAM | Service-to-service authorization | Terraform creates Lambda role/policies |
+| CloudWatch Logs | Lambda runtime/error logs | Terraform creates log group with 14-day default retention |
+
+The public `POST` route is intentionally unauthenticated by default so a fresh deployment works immediately. See the integration guide before exposing it as a production public service.
+
+## Local tests
+
+The unit suite has no install step:
+
+```bash
+npm run lint
+npm test
 ```
 
-## Run the Lambda container locally
+It covers success, CORS behavior, language selection, malformed JSON, missing input, oversized input, unsupported language, and Comprehend failure handling.
 
-The Docker image uses the official AWS Lambda Node.js base image. Export AWS credentials that are allowed to call Comprehend, then run:
+## Docker local Lambda runtime
+
+The image uses the official AWS Lambda Node.js base image.
 
 ```bash
 docker compose up --build
 ```
 
-Invoke the local Lambda runtime endpoint:
+Invoke it through the Lambda Runtime Interface Emulator:
 
 ```bash
 curl -X POST \
@@ -86,16 +101,24 @@ curl -X POST \
   http://localhost:9000/2015-03-31/functions/function/invocations
 ```
 
+A real Comprehend call from the local container requires AWS credentials with `comprehend:DetectSentiment`.
+
+## Browser use / CORS
+
+CORS preflight is provisioned automatically. Development defaults to `cors_allowed_origin = "*"`. For production browser clients, use the exact site origin:
+
+```bash
+terraform -chdir=terraform apply \
+  -var='cors_allowed_origin=https://app.example.com'
+```
+
+See [`examples/browser.html`](examples/browser.html) for a minimal browser client.
+
 ## GitHub Actions
 
-`CI` runs on pushes to `dev` and `main` and on pull requests to `main`. It checks JavaScript syntax, runs the unit tests, validates/formats Terraform, and verifies the Lambda container builds.
+`CI` runs JavaScript checks/tests, Terraform format/init/validate, and a Docker image build.
 
-`Deploy to AWS` is a manual workflow. Add these repository secrets before using it:
-
-- `AWS_ACCESS_KEY_ID`
-- `AWS_SECRET_ACCESS_KEY`
-
-Then run the workflow and choose the AWS region and API Gateway stage.
+`Deploy to AWS` is manually triggered and requires `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` repository secrets in its current form. It applies Terraform and then runs the live smoke test automatically. For production organizations, prefer GitHub Actions OIDC and an AWS deployment role; setup guidance is in the deployment guide.
 
 ## Cleanup
 
