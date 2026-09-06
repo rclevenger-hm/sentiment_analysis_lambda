@@ -1,0 +1,24 @@
+# Node
+node_modules/
+npm-debug.log*
+
+# Local environment
+.env
+.env.*
+!.env.example
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+terraform/lambda_function.zip
+.terraform.lock.hcl
+crash.log
+crash.*.log
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

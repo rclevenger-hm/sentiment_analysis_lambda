@@ -1,0 +1,13 @@
+{
+  "name": "sentiment-analysis-lambda",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AWS Lambda sentiment analysis API backed by Amazon Comprehend",
+  "scripts": {
+    "lint": "node --check lambda_function/handler.js && node --check tests/handler.test.js",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}
