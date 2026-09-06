@@ -5,7 +5,7 @@
   "description": "AWS Lambda sentiment analysis API backed by Amazon Comprehend",
   "scripts": {
     "lint": "node --check lambda_function/handler.js && node --check tests/handler.test.js && node --check scripts/smoke-test.mjs",
-    "test": "node --test",
+    "test": "node --test tests/handler.test.js",
     "smoke": "node scripts/smoke-test.mjs"
   },
   "engines": {
