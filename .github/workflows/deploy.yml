@@ -21,6 +21,7 @@ on:
 
 permissions:
   contents: read
+  id-token: write
 
 jobs:
   deploy:
@@ -38,12 +39,24 @@ jobs:
       - name: Test Lambda
         run: npm test
 
-      - name: Configure AWS credentials
+      - name: Configure AWS credentials with OIDC
+        if: ${{ vars.AWS_ROLE_TO_ASSUME != '' }}
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_TO_ASSUME }}
+          aws-region: ${{ inputs.aws_region }}
+
+      - name: Configure AWS credentials with access keys
+        if: ${{ vars.AWS_ROLE_TO_ASSUME == '' }}
         uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ inputs.aws_region }}
+
+      - name: Warn when using long-lived AWS credentials
+        if: ${{ vars.AWS_ROLE_TO_ASSUME == '' }}
+        run: echo '::warning::AWS_ROLE_TO_ASSUME is not configured; deployment is using long-lived repository secrets. Prefer GitHub OIDC for production deployments.'
 
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
