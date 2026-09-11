@@ -39,15 +39,18 @@ function createTestHandler({ result, error } = {}) {
   };
 }
 
-test('returns sentiment, score, and CORS headers for a valid request', async () => {
+test('returns sentiment, score, and bounded response headers for a valid request', async () => {
   const { calls, handler } = createTestHandler();
   const response = await handler({
+    requestContext: { requestId: 'req-123' },
     body: JSON.stringify({ text: 'I love this product!' }),
   });
 
   assert.equal(response.statusCode, 200);
   assert.equal(response.headers['access-control-allow-origin'], '*');
   assert.equal(response.headers['access-control-allow-methods'], 'OPTIONS,POST');
+  assert.equal(response.headers['cache-control'], 'no-store');
+  assert.equal(response.headers['x-request-id'], 'req-123');
   assert.deepEqual(JSON.parse(response.body), {
     sentiment: 'POSITIVE',
     sentimentScore: {
@@ -63,6 +66,16 @@ test('returns sentiment, score, and CORS headers for a valid request', async () 
       Text: 'I love this product!',
     },
   ]);
+});
+
+test('does not reflect an untrusted request id when API Gateway did not provide one', async () => {
+  const { handler } = createTestHandler();
+  const response = await handler({
+    headers: { 'x-request-id': 'caller-controlled' },
+    body: JSON.stringify({ text: 'hello' }),
+  });
+
+  assert.equal(response.headers['x-request-id'], undefined);
 });
 
 test('uses the configured CORS origin', async () => {
@@ -130,17 +143,28 @@ test('rejects unsupported language codes', async () => {
   assert.equal(response.statusCode, 400);
 });
 
-test('returns 502 when Comprehend fails', async () => {
+test('returns 502 and structured correlation data when Comprehend fails', async () => {
   const originalConsoleError = console.error;
-  console.error = () => {};
+  const logLines = [];
+  console.error = (line) => logLines.push(line);
 
   try {
     const { handler } = createTestHandler({ error: new Error('AWS unavailable') });
-    const response = await handler({ body: JSON.stringify({ text: 'hello' }) });
+    const response = await handler({
+      requestContext: { requestId: 'req-failure' },
+      body: JSON.stringify({ text: 'hello' }),
+    });
 
     assert.equal(response.statusCode, 502);
+    assert.equal(response.headers['x-request-id'], 'req-failure');
     assert.deepEqual(JSON.parse(response.body), {
       error: 'Sentiment service unavailable',
+    });
+    assert.deepEqual(JSON.parse(logLines[0]), {
+      event: 'sentiment_service_error',
+      requestId: 'req-failure',
+      errorName: 'Error',
+      message: 'AWS unavailable',
     });
   } finally {
     console.error = originalConsoleError;
