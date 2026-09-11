@@ -16,19 +16,26 @@ const SUPPORTED_LANGUAGE_CODES = new Set([
   'zh-TW',
 ]);
 
-function responseHeaders() {
-  return {
+function responseHeaders(requestId) {
+  const headers = {
     'content-type': 'application/json; charset=utf-8',
+    'cache-control': 'no-store',
     'access-control-allow-origin': process.env.ALLOWED_ORIGIN || '*',
     'access-control-allow-methods': 'OPTIONS,POST',
     'access-control-allow-headers': 'Content-Type',
   };
+
+  if (requestId) {
+    headers['x-request-id'] = requestId;
+  }
+
+  return headers;
 }
 
-function jsonResponse(statusCode, body) {
+function jsonResponse(statusCode, body, requestId) {
   return {
     statusCode,
-    headers: responseHeaders(),
+    headers: responseHeaders(requestId),
     body: JSON.stringify(body),
   };
 }
@@ -49,6 +56,11 @@ function parsePayload(event) {
   return {};
 }
 
+function requestIdFrom(event) {
+  const requestId = event?.requestContext?.requestId;
+  return typeof requestId === 'string' && requestId.trim() ? requestId.trim() : null;
+}
+
 function createHandler({ client, DetectSentimentCommand }) {
   if (!client || typeof client.send !== 'function') {
     throw new TypeError('A Comprehend client with a send() method is required');
@@ -59,29 +71,30 @@ function createHandler({ client, DetectSentimentCommand }) {
   }
 
   return async function handler(event = {}) {
+    const requestId = requestIdFrom(event);
     let payload;
 
     try {
       payload = parsePayload(event);
     } catch (_error) {
-      return jsonResponse(400, { error: 'Request body must contain valid JSON' });
+      return jsonResponse(400, { error: 'Request body must contain valid JSON' }, requestId);
     }
 
     const text = typeof payload.text === 'string' ? payload.text.trim() : '';
     const languageCode = payload.languageCode || 'en';
 
     if (!text) {
-      return jsonResponse(400, { error: 'text must be a non-empty string' });
+      return jsonResponse(400, { error: 'text must be a non-empty string' }, requestId);
     }
 
     if (Buffer.byteLength(text, 'utf8') > MAX_TEXT_BYTES) {
       return jsonResponse(413, {
         error: `text must be ${MAX_TEXT_BYTES} UTF-8 bytes or fewer`,
-      });
+      }, requestId);
     }
 
     if (!SUPPORTED_LANGUAGE_CODES.has(languageCode)) {
-      return jsonResponse(400, { error: 'Unsupported languageCode' });
+      return jsonResponse(400, { error: 'Unsupported languageCode' }, requestId);
     }
 
     try {
@@ -95,10 +108,15 @@ function createHandler({ client, DetectSentimentCommand }) {
       return jsonResponse(200, {
         sentiment: result.Sentiment,
         sentimentScore: result.SentimentScore || null,
-      });
+      }, requestId);
     } catch (error) {
-      console.error('Error analyzing sentiment:', error);
-      return jsonResponse(502, { error: 'Sentiment service unavailable' });
+      console.error(JSON.stringify({
+        event: 'sentiment_service_error',
+        requestId,
+        errorName: error?.name || 'Error',
+        message: error?.message || 'Unknown service error',
+      }));
+      return jsonResponse(502, { error: 'Sentiment service unavailable' }, requestId);
     }
   };
 }
