@@ -1,5 +1,6 @@
 'use strict';
 
+const MAX_REQUEST_BYTES = 16 * 1024;
 const MAX_TEXT_BYTES = 5000;
 const SUPPORTED_LANGUAGE_CODES = new Set([
   'ar',
@@ -72,8 +73,17 @@ function createHandler({ client, DetectSentimentCommand }) {
 
   return async function handler(event = {}) {
     const requestId = requestIdFrom(event);
-    let payload;
 
+    if (
+      typeof event?.body === 'string'
+      && Buffer.byteLength(event.body, 'utf8') > MAX_REQUEST_BYTES
+    ) {
+      return jsonResponse(413, {
+        error: `Request body must be ${MAX_REQUEST_BYTES} UTF-8 bytes or fewer`,
+      }, requestId);
+    }
+
+    let payload;
     try {
       payload = parsePayload(event);
     } catch (_error) {
@@ -144,6 +154,7 @@ async function analyzeSentiment(event) {
 }
 
 module.exports = {
+  MAX_REQUEST_BYTES,
   MAX_TEXT_BYTES,
   analyzeSentiment,
   createHandler,
