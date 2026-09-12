@@ -3,6 +3,7 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
 const {
+  MAX_REQUEST_BYTES,
   MAX_TEXT_BYTES,
   createHandler,
 } = require('../lambda_function/handler');
@@ -116,6 +117,19 @@ test('rejects malformed JSON', async () => {
 
   assert.equal(response.statusCode, 400);
   assert.match(JSON.parse(response.body).error, /valid JSON/);
+});
+
+test('rejects oversized request bodies before JSON parsing or service calls', async () => {
+  const { calls, handler } = createTestHandler();
+  const response = await handler({
+    requestContext: { requestId: 'req-large' },
+    body: 'x'.repeat(MAX_REQUEST_BYTES + 1),
+  });
+
+  assert.equal(response.statusCode, 413);
+  assert.equal(response.headers['x-request-id'], 'req-large');
+  assert.match(JSON.parse(response.body).error, /Request body/);
+  assert.equal(calls.length, 0);
 });
 
 test('rejects an empty text field', async () => {
