@@ -3,3 +3,6 @@ project_name        = "sentiment-analysis"
 stage_name          = "prod"
 cors_allowed_origin = "*"
 log_retention_days  = 14
+
+# Optional: route CloudWatch alarm transitions to one or more action targets.
+# alarm_action_arns = ["arn:aws:sns:us-east-1:123456789012:sentiment-alerts"]
