@@ -69,7 +69,31 @@ test('returns sentiment, score, and bounded response headers for a valid request
   ]);
 });
 
-test('does not reflect an untrusted request id when API Gateway did not provide one', async () => {
+test('uses the Lambda context request id when API Gateway context is unavailable', async () => {
+  const { handler } = createTestHandler();
+  const response = await handler(
+    { text: 'hello' },
+    { awsRequestId: 'lambda-req-456' },
+  );
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.headers['x-request-id'], 'lambda-req-456');
+});
+
+test('prefers the API Gateway request id when both trusted correlation ids exist', async () => {
+  const { handler } = createTestHandler();
+  const response = await handler(
+    {
+      requestContext: { requestId: 'gateway-req-123' },
+      body: JSON.stringify({ text: 'hello' }),
+    },
+    { awsRequestId: 'lambda-req-456' },
+  );
+
+  assert.equal(response.headers['x-request-id'], 'gateway-req-123');
+});
+
+test('does not reflect an untrusted request id when trusted execution context did not provide one', async () => {
   const { handler } = createTestHandler();
   const response = await handler({
     headers: { 'x-request-id': 'caller-controlled' },
