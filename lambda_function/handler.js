@@ -57,9 +57,13 @@ function parsePayload(event) {
   return {};
 }
 
-function requestIdFrom(event) {
-  const requestId = event?.requestContext?.requestId;
-  return typeof requestId === 'string' && requestId.trim() ? requestId.trim() : null;
+function trustedRequestId(value) {
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function requestIdFrom(event, context = {}) {
+  return trustedRequestId(event?.requestContext?.requestId)
+    || trustedRequestId(context?.awsRequestId);
 }
 
 function createHandler({ client, DetectSentimentCommand }) {
@@ -71,8 +75,8 @@ function createHandler({ client, DetectSentimentCommand }) {
     throw new TypeError('DetectSentimentCommand must be a constructor');
   }
 
-  return async function handler(event = {}) {
-    const requestId = requestIdFrom(event);
+  return async function handler(event = {}, context = {}) {
+    const requestId = requestIdFrom(event, context);
 
     if (
       typeof event?.body === 'string'
@@ -149,8 +153,8 @@ function getDefaultHandler() {
   return defaultHandler;
 }
 
-async function analyzeSentiment(event) {
-  return getDefaultHandler()(event);
+async function analyzeSentiment(event, context) {
+  return getDefaultHandler()(event, context);
 }
 
 module.exports = {
