@@ -118,7 +118,7 @@ See [`examples/browser.html`](examples/browser.html) for a minimal browser clien
 
 `CI` runs JavaScript checks/tests, Terraform format/init/validate, and a Docker image build.
 
-`Deploy to AWS` is manually triggered and requires `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` repository secrets in its current form. It applies Terraform and then runs the live smoke test automatically. For production organizations, prefer GitHub Actions OIDC and an AWS deployment role; setup guidance is in the deployment guide.
+`Deploy to AWS` is manually triggered. When the repository variable `AWS_ROLE_TO_ASSUME` is configured, the workflow uses GitHub Actions OIDC to obtain short-lived AWS credentials. If that variable is absent, it falls back to `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` repository secrets and emits a warning. It applies Terraform and then runs the live smoke test automatically. OIDC is the recommended production path; setup guidance is in the deployment guide.
 
 ## Cleanup
 
