@@ -1,8 +1,11 @@
-aws_region          = "us-east-1"
-project_name        = "sentiment-analysis"
-stage_name          = "prod"
-cors_allowed_origin = "*"
-log_retention_days  = 14
-
-# Optional: route CloudWatch alarm transitions to one or more action targets.
-# alarm_action_arns = ["arn:aws:sns:us-east-1:123456789012:sentiment-alerts"]
+aws_region = "us-east-1"
+project_name = "sentiment-analysis"
+stage_name = "dev"
+cors_allowed_origin = "https://app.example.com"
+notification_email = "operator@example.com"
+monthly_budget_usd = 50
+log_retention_days = 14
+data_retention_days = 30
+daily_analysis_limit = 1000
+request_rate_limit = 5
+request_burst_limit = 10

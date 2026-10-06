@@ -9,7 +9,7 @@ resource "aws_cloudwatch_metric_alarm" "lambda_errors" {
   comparison_operator = "GreaterThanThreshold"
   threshold           = 0
   treat_missing_data  = "notBreaching"
-  alarm_actions       = var.alarm_action_arns
+  alarm_actions       = concat([aws_sns_topic.operations.arn], var.alarm_action_arns)
 
   dimensions = {
     FunctionName = aws_lambda_function.sentiment.function_name
@@ -29,7 +29,7 @@ resource "aws_cloudwatch_metric_alarm" "lambda_throttles" {
   comparison_operator = "GreaterThanThreshold"
   threshold           = 0
   treat_missing_data  = "notBreaching"
-  alarm_actions       = var.alarm_action_arns
+  alarm_actions       = concat([aws_sns_topic.operations.arn], var.alarm_action_arns)
 
   dimensions = {
     FunctionName = aws_lambda_function.sentiment.function_name
@@ -49,7 +49,7 @@ resource "aws_cloudwatch_metric_alarm" "api_5xx" {
   comparison_operator = "GreaterThanThreshold"
   threshold           = 0
   treat_missing_data  = "notBreaching"
-  alarm_actions       = var.alarm_action_arns
+  alarm_actions       = concat([aws_sns_topic.operations.arn], var.alarm_action_arns)
 
   dimensions = {
     ApiName = aws_api_gateway_rest_api.sentiment.name
@@ -58,3 +58,4 @@ resource "aws_cloudwatch_metric_alarm" "api_5xx" {
 
   tags = local.common_tags
 }
+

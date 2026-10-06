@@ -23,7 +23,7 @@ variable "project_name" {
 variable "stage_name" {
   description = "API Gateway stage and deployment environment name"
   type        = string
-  default     = "prod"
+  default     = "dev"
 
   validation {
     condition     = can(regex("^[A-Za-z0-9_-]+$", var.stage_name))
@@ -60,5 +60,73 @@ variable "alarm_action_arns" {
   validation {
     condition     = alltrue([for arn in var.alarm_action_arns : can(regex("^arn:[^:]+:[^:]+:[^:]*:[^:]*:.+$", arn))])
     error_message = "alarm_action_arns must contain valid ARN-shaped values."
+  }
+}
+
+
+variable "daily_analysis_limit" {
+  type        = number
+  default     = 1000
+  description = "Daily accepted inference units per IAM principal; targeted sentiment uses two units per record."
+  validation {
+    condition     = var.daily_analysis_limit >= 1 && floor(var.daily_analysis_limit) == var.daily_analysis_limit
+    error_message = "daily_analysis_limit must be a positive integer."
+  }
+}
+variable "data_retention_days" {
+  type    = number
+  default = 30
+  validation {
+    condition     = var.data_retention_days >= 1 && var.data_retention_days <= 365 && floor(var.data_retention_days) == var.data_retention_days
+    error_message = "data_retention_days must be an integer from 1 to 365."
+  }
+}
+variable "api_concurrency" {
+  type    = number
+  default = 10
+  validation {
+    condition     = var.api_concurrency >= 1 && floor(var.api_concurrency) == var.api_concurrency
+    error_message = "api_concurrency must be a positive integer."
+  }
+}
+variable "worker_concurrency" {
+  type    = number
+  default = 5
+  validation {
+    condition     = var.worker_concurrency >= 2 && floor(var.worker_concurrency) == var.worker_concurrency
+    error_message = "worker_concurrency must be an integer of at least 2."
+  }
+}
+variable "request_rate_limit" {
+  type    = number
+  default = 5
+  validation {
+    condition     = var.request_rate_limit > 0
+    error_message = "request_rate_limit must be positive."
+  }
+}
+variable "request_burst_limit" {
+  type    = number
+  default = 10
+  validation {
+    condition     = var.request_burst_limit >= 1 && floor(var.request_burst_limit) == var.request_burst_limit
+    error_message = "request_burst_limit must be a positive integer."
+  }
+}
+variable "notification_email" {
+  type        = string
+  description = "Operator email for CloudWatch and budget notifications. Confirm the SNS subscription after deployment."
+  validation {
+    condition     = can(regex("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$", var.notification_email))
+    error_message = "Set a valid notification_email."
+  }
+}
+variable "monthly_budget_usd" {
+  type        = number
+  default     = 50
+  description = "Account-wide monthly AWS cost notification threshold; this is not a hard spending cap."
+  validation {
+    condition     = var.monthly_budget_usd > 0
+    error_message = "monthly_budget_usd must be positive."
   }
 }

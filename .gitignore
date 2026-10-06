@@ -63,3 +63,13 @@ terraform/*.tfstate.*
 terraform/lambda_function.zip
 terraform/crash.log
 terraform/crash.*.log
+
+
+# Build and environment-specific infrastructure files
+terraform/**/*.tfstate
+terraform/**/*.tfstate.*
+terraform/**/.terraform/
+terraform/*.tfvars
+terraform/*.tfplan
+terraform/backend.hcl
+terraform/bootstrap/backend.tf

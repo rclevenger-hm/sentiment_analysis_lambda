@@ -1,90 +1,26 @@
-# Integration guide
+# Integration
 
-## What connects to what
-
-The deployed request path is:
-
-```text
-client/service
-    |
-    | HTTPS POST /analyze-sentiment
-    v
-API Gateway
-    |
-    | Lambda proxy invocation
-    v
-AWS Lambda (Node.js 24)
-    |
-    | IAM-authenticated comprehend:DetectSentiment
-    v
-Amazon Comprehend
-```
-
-You do not need to create a Comprehend API key, hostname, database, queue, or model. The Lambda's IAM execution role authorizes the AWS SDK call to the regional Comprehend service. API Gateway is the public-facing integration point for your applications.
-
-## Shell/cURL
+Use the signed Node CLI after `npm ci`; it resolves normal AWS profiles, environment credentials and temporary role sessions. Set `AWS_REGION` and `API_ENDPOINT` to the API stage base URL. An old URL ending in `/analyze-sentiment` is normalized by the client. Production clients require a dedicated consumer role with `execute-api:Invoke` permission.
 
 ```bash
-export API_ENDPOINT="$(terraform -chdir=terraform output -raw api_endpoint_url)"
-
-curl -sS -X POST \
-  -H 'Content-Type: application/json' \
-  -d '{"text":"The release went extremely well."}' \
-  "$API_ENDPOINT"
+npm run client -- analyze 'The service works well.'
+npm run client -- submit examples/feedback.csv --targeted --key october-reviews-01
+npm run client -- status JOB_ID
+npm run client -- results JOB_ID --limit 50 --offset 0
+npm run client -- report JOB_ID --source support --from 2026-10-01 --to 2026-10-31
+npm run client -- export JOB_ID --format json --out results.json
+npm run client -- compare CURRENT_JOB_ID BASELINE_JOB_ID
+npm run client -- history --limit 20
+npm run client -- rule examples/alert-rule.json
+npm run client -- alerts
+npm run client -- acknowledge JOB_ID
+npm run client -- usage
 ```
 
-## Node.js service
+Bulk JSON uses `{records:[...],targeted:true}`; CSV has fixed supported column names. Map source-system columns to `id,text,languageCode,date,product,source` before submission. `--targeted` works for either upload format. Preserve the printed key if a submission times out. The CLI does not automatically resubmit work or poll indefinitely. Query status until terminal, then inspect per-record errors.
 
-No SDK is required for a downstream service; call the HTTP endpoint with `fetch`:
+For Node applications, import `request` from `scripts/client.mjs`; it accepts method/body/contentType/idempotencyKey and returns status/contentType/text. Requests have finite timeouts. Follow `nextCursor` for history/alerts and `nextOffset` for records. Export requests return a signed URL; the CLI downloads its contents automatically when using `export`, including `--out`.
 
-```bash
-export API_ENDPOINT="https://.../prod/analyze-sentiment"
-node examples/node-client.mjs "The release went extremely well."
-```
+Python's example uses boto3/botocore signing (`pip install boto3`). Do not put long-lived AWS credentials in browser code. A browser application should use a backend that signs calls on behalf of its authorized users, or a separately designed short-lived identity flow with distinct tenant roles. The browser example is an informational page, not an unauthenticated live client.
 
-The example throws on non-2xx responses so it can be used directly in service/job error handling.
-
-## Python service
-
-The included example uses only the Python standard library:
-
-```bash
-export API_ENDPOINT="https://.../prod/analyze-sentiment"
-python3 examples/python-client.py "The release went extremely well."
-```
-
-## Browser application
-
-Terraform provisions an `OPTIONS` preflight method and the Lambda returns CORS response headers. Set `cors_allowed_origin` to the exact web application origin in production.
-
-Open `examples/browser.html`, paste the deployed endpoint, and submit text to exercise the API from browser JavaScript.
-
-Do not put AWS credentials in browser code. Browser applications should call API Gateway, not Amazon Comprehend directly.
-
-## Postman / Insomnia / generated clients
-
-Import `openapi.yaml`, then replace the `apiId`, `region`, and `stage` server variables using the deployed URL. This provides the request/response schemas and error statuses to client tooling.
-
-## Calling Comprehend directly instead
-
-If another trusted AWS workload already has IAM credentials, it can call `comprehend:DetectSentiment` directly with an AWS SDK. In that case this repository's API Gateway/Lambda layer is optional. Keep the API layer when you want a stable HTTP contract, centralized validation, browser access, or a boundary that prevents clients from receiving AWS credentials.
-
-## Authentication and production hardening
-
-The Terraform configuration intentionally defaults to an unauthenticated API (`authorization = "NONE"`) so the project works immediately after deployment. CORS does not secure the endpoint.
-
-Before exposing a production endpoint broadly, choose an access-control model appropriate to the caller:
-
-- **AWS IAM authorization** for AWS-to-AWS callers that can sign requests with SigV4;
-- **Cognito/JWT authorizer** for end-user applications;
-- **API Gateway API key + usage plan** for basic consumer identification/throttling (not a substitute for strong user authentication);
-- **AWS WAF** for network/application filtering and abuse controls;
-- a private/internal API architecture if the endpoint should never be public.
-
-Those controls are environment-specific and are not enabled automatically because each changes how consumers authenticate.
-
-## Timeouts and retries
-
-Treat `502` as an upstream service failure. Callers may retry transient 5xx responses with bounded exponential backoff. Do not automatically retry 4xx responses; fix the request instead.
-
-The Lambda timeout is 10 seconds. Downstream clients should use a finite request timeout slightly above their normal expected latency and should not retry indefinitely.
+The API's confidence scores are not calibrated probabilities of business impact. Targeted entities describe what the text discusses; they do not establish urgency or a root cause. Validate analysis quality on labeled examples from your domain before automating business decisions.

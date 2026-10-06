@@ -1,8 +1,9 @@
 openapi: 3.0.3
 info:
-  title: Sentiment Analysis API
-  version: 1.0.0
-  description: HTTP API backed by AWS Lambda and Amazon Comprehend DetectSentiment.
+  title: Sentiment Analysis Service
+  version: 2.0.0
+  description: IAM-authenticated single and bulk analysis, targeted evidence,
+    retained job reports and alert feeds.
 servers:
   - url: https://{apiId}.execute-api.{region}.amazonaws.com/{stage}
     variables:
@@ -11,60 +12,674 @@ servers:
       region:
         default: us-east-1
       stage:
-        default: prod
+        default: dev
+security:
+  - sigv4: []
 paths:
   /analyze-sentiment:
     post:
-      summary: Analyze text sentiment
       operationId: analyzeSentiment
+      summary: Analyze one text without retained history
+      parameters: []
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/SentimentRequest'
+              $ref: "#/components/schemas/SingleRequest"
       responses:
-        '200':
-          description: Sentiment detected successfully
+        "200":
+          description: Successful response
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SentimentResponse'
-        '400':
-          description: Invalid JSON, empty text, or unsupported language
+                $ref: "#/components/schemas/Sentiment"
+        "400": &a1
+          description: Request rejected or service unavailable; gateway errors can use a
+            gateway-managed body.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '413':
-          description: Text exceeds the 5 KB Amazon Comprehend limit
+                $ref: "#/components/schemas/Error"
+        "401": &a2
+          description: Request rejected or service unavailable; gateway errors can use a
+            gateway-managed body.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '502':
-          description: Amazon Comprehend could not service the request
+                $ref: "#/components/schemas/Error"
+        "403": &a3
+          description: Request rejected or service unavailable; gateway errors can use a
+            gateway-managed body.
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ErrorResponse'
+                $ref: "#/components/schemas/Error"
+        "404": &a4
+          description: Request rejected or service unavailable; gateway errors can use a
+            gateway-managed body.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409": &a5
+          description: Request rejected or service unavailable; gateway errors can use a
+            gateway-managed body.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413": &a6
+          description: Request rejected or service unavailable; gateway errors can use a
+            gateway-managed body.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "415": &a7
+          description: Request rejected or service unavailable; gateway errors can use a
+            gateway-managed body.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429": &a8
+          description: Request rejected or service unavailable; gateway errors can use a
+            gateway-managed body.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "502": &a9
+          description: Request rejected or service unavailable; gateway errors can use a
+            gateway-managed body.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503": &a10
+          description: Request rejected or service unavailable; gateway errors can use a
+            gateway-managed body.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /jobs:
+    post:
+      operationId: submitJob
+      summary: Submit an idempotent CSV or JSON job
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            pattern: ^[A-Za-z0-9._:-]{8,128}$
+        - name: targeted
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+          description: CSV only; JSON uses the body field.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BulkRequest"
+          text/csv:
+            schema:
+              type: string
+            example: |
+              id,text,source
+              review-1,Great product,reviews
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+        "202":
+          description: Accepted or existing unfinished job
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+        "400": *a1
+        "401": *a2
+        "403": *a3
+        "404": *a4
+        "409": *a5
+        "413": *a6
+        "415": *a7
+        "429": *a8
+        "502": *a9
+        "503": *a10
+  /jobs/{jobId}:
+    get:
+      operationId: getJob
+      summary: Get progress and summary
+      parameters:
+        - &a11
+          name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: ^[a-f0-9]{64}$
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+        "400": *a1
+        "401": *a2
+        "403": *a3
+        "404": *a4
+        "409": *a5
+        "413": *a6
+        "415": *a7
+        "429": *a8
+        "502": *a9
+        "503": *a10
+  /jobs/{jobId}/results:
+    get:
+      operationId: getResults
+      summary: Get checkpointed records and per-record errors
+      parameters:
+        - *a11
+        - &a12
+          name: sentiment
+          in: query
+          required: false
+          schema: &a26
+            type: string
+            enum:
+              - POSITIVE
+              - NEGATIVE
+              - NEUTRAL
+              - MIXED
+          description: ""
+        - &a13
+          name: product
+          in: query
+          required: false
+          schema: &a27
+            type: string
+          description: ""
+        - &a14
+          name: source
+          in: query
+          required: false
+          schema: &a28
+            type: string
+          description: ""
+        - &a15
+          name: languageCode
+          in: query
+          required: false
+          schema: &a29
+            type: string
+          description: ""
+        - &a16
+          name: from
+          in: query
+          required: false
+          schema: &a30
+            type: string
+            format: date
+          description: ""
+        - &a17
+          name: to
+          in: query
+          required: false
+          schema: &a31
+            type: string
+            format: date
+          description: ""
+        - &a18
+          name: minConfidence
+          in: query
+          required: false
+          schema: &a32
+            type: number
+            minimum: 0
+            maximum: 1
+          description: ""
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 200
+            default: 0
+          description: ""
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+          description: ""
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Results"
+        "400": *a1
+        "401": *a2
+        "403": *a3
+        "404": *a4
+        "409": *a5
+        "413": *a6
+        "415": *a7
+        "429": *a8
+        "502": *a9
+        "503": *a10
+  /jobs/{jobId}/report:
+    get:
+      operationId: getReport
+      summary: Get filtered trends and traceable entity concerns
+      parameters:
+        - *a11
+        - *a12
+        - *a13
+        - *a14
+        - *a15
+        - *a16
+        - *a17
+        - *a18
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Report"
+        "400": *a1
+        "401": *a2
+        "403": *a3
+        "404": *a4
+        "409": *a5
+        "413": *a6
+        "415": *a7
+        "429": *a8
+        "502": *a9
+        "503": *a10
+  /jobs/{jobId}/export:
+    get:
+      operationId: exportJob
+      summary: Create a download URL valid for 60 seconds
+      parameters:
+        - *a11
+        - *a12
+        - *a13
+        - *a14
+        - *a15
+        - *a16
+        - *a17
+        - *a18
+        - name: format
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - csv
+              - json
+            default: json
+          description: ""
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Export"
+        "400": *a1
+        "401": *a2
+        "403": *a3
+        "404": *a4
+        "409": *a5
+        "413": *a6
+        "415": *a7
+        "429": *a8
+        "502": *a9
+        "503": *a10
+  /history:
+    get:
+      operationId: history
+      summary: List caller-owned jobs newest first
+      parameters:
+        - name: from
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+          description: ""
+        - name: to
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+          description: ""
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum:
+              - QUEUED
+              - RUNNING
+              - COMPLETED
+              - COMPLETED_WITH_ERRORS
+              - FAILED
+          description: ""
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+          description: ""
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+          description: ""
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/History"
+        "400": *a1
+        "401": *a2
+        "403": *a3
+        "404": *a4
+        "409": *a5
+        "413": *a6
+        "415": *a7
+        "429": *a8
+        "502": *a9
+        "503": *a10
+  /compare:
+    get:
+      operationId: compare
+      summary: Compare finished job samples
+      parameters:
+        - name: current
+          in: query
+          required: true
+          schema:
+            type: string
+          description: ""
+        - name: baseline
+          in: query
+          required: true
+          schema:
+            type: string
+          description: ""
+        - *a12
+        - *a13
+        - *a14
+        - *a15
+        - *a16
+        - *a17
+        - *a18
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Comparison"
+        "400": *a1
+        "401": *a2
+        "403": *a3
+        "404": *a4
+        "409": *a5
+        "413": *a6
+        "415": *a7
+        "429": *a8
+        "502": *a9
+        "503": *a10
+  /usage:
+    get:
+      operationId: usage
+      summary: Get accepted analysis allowance for the current UTC day
+      parameters: []
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Usage"
+        "400": *a1
+        "401": *a2
+        "403": *a3
+        "404": *a4
+        "409": *a5
+        "413": *a6
+        "415": *a7
+        "429": *a8
+        "502": *a9
+        "503": *a10
+  /alert-rule:
+    get:
+      operationId: getAlertRule
+      summary: Get the current rule
+      parameters: []
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlertRule"
+        "400": *a1
+        "401": *a2
+        "403": *a3
+        "404": *a4
+        "409": *a5
+        "413": *a6
+        "415": *a7
+        "429": *a8
+        "502": *a9
+        "503": *a10
+    put:
+      operationId: setAlertRule
+      summary: Replace the rule used when future jobs finish
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AlertRule"
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AlertRule"
+        "400": *a1
+        "401": *a2
+        "403": *a3
+        "404": *a4
+        "409": *a5
+        "413": *a6
+        "415": *a7
+        "429": *a8
+        "502": *a9
+        "503": *a10
+  /alerts:
+    get:
+      operationId: alerts
+      summary: List threshold alerts and source record IDs
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+          description: ""
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+          description: ""
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Alerts"
+        "400": *a1
+        "401": *a2
+        "403": *a3
+        "404": *a4
+        "409": *a5
+        "413": *a6
+        "415": *a7
+        "429": *a8
+        "502": *a9
+        "503": *a10
+  /alerts/{jobId}/acknowledge:
+    put:
+      operationId: acknowledgeAlert
+      summary: Acknowledge a caller-owned alert
+      parameters:
+        - *a11
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  acknowledged:
+                    type: boolean
+        "400": *a1
+        "401": *a2
+        "403": *a3
+        "404": *a4
+        "409": *a5
+        "413": *a6
+        "415": *a7
+        "429": *a8
+        "502": *a9
+        "503": *a10
 components:
+  securitySchemes:
+    sigv4:
+      type: apiKey
+      in: header
+      name: Authorization
+      description: AWS Signature Version 4 for execute-api; use temporary IAM
+        credentials and include X-Amz-Date and session token when required.
+      x-amazon-apigateway-authtype: awsSigv4
   schemas:
-    SentimentRequest:
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+        code:
+          type: string
+        requestId:
+          type: string
+    SingleRequest:
       type: object
       required:
         - text
       properties:
-        text:
+        text: &a19
           type: string
           minLength: 1
-          description: UTF-8 input text, maximum 5 KB.
-          example: I love this product!
-        languageCode:
+          description: Maximum 5000 UTF-8 bytes; no silent truncation.
+        languageCode: &a20
           type: string
+          enum:
+            - ar
+            - de
+            - en
+            - es
+            - fr
+            - hi
+            - it
+            - ja
+            - ko
+            - pt
+            - zh
+            - zh-TW
           default: en
-          enum: [ar, de, en, es, fr, hi, it, ja, ko, pt, zh, zh-TW]
-    SentimentResponse:
+        targeted:
+          type: boolean
+          default: false
+          description: English only.
+    Record:
+      type: object
+      required:
+        - text
+      properties:
+        id: &a22
+          type: string
+          maxLength: 128
+        text: *a19
+        languageCode: *a20
+        date: &a23
+          type: string
+          format: date
+        product: &a24
+          type: string
+          maxLength: 120
+        source: &a25
+          type: string
+          maxLength: 120
+    BulkRequest:
+      type: object
+      required:
+        - records
+      properties:
+        label:
+          type: string
+          maxLength: 120
+        targeted:
+          type: boolean
+          default: false
+        records:
+          type: array
+          minItems: 1
+          maxItems: 200
+          items:
+            $ref: "#/components/schemas/Record"
+      description: Maximum total body size is 1 MiB. Invalid rows become record
+        errors; duplicate IDs reject the submission.
+    Sentiment:
       type: object
       required:
         - sentiment
@@ -72,22 +687,323 @@ components:
       properties:
         sentiment:
           type: string
-          enum: [POSITIVE, NEGATIVE, NEUTRAL, MIXED]
-        sentimentScore:
+          enum:
+            - POSITIVE
+            - NEGATIVE
+            - NEUTRAL
+            - MIXED
+        sentimentScore: &a21
           type: object
           properties:
             Positive:
               type: number
+              minimum: 0
+              maximum: 1
             Negative:
               type: number
+              minimum: 0
+              maximum: 1
             Neutral:
               type: number
+              minimum: 0
+              maximum: 1
             Mixed:
               type: number
-    ErrorResponse:
+              minimum: 0
+              maximum: 1
+        entities:
+          type: array
+          items:
+            $ref: "#/components/schemas/Entity"
+        entitiesTruncated:
+          type: boolean
+    Entity:
+      type: object
+      properties:
+        truncated:
+          type: boolean
+        mentions:
+          type: array
+          maxItems: 3
+          items:
+            type: object
+            properties:
+              text:
+                type: string
+              type:
+                type: string
+              sentiment:
+                type: string
+              sentimentScore: *a21
+              beginOffset:
+                type: integer
+              endOffset:
+                type: integer
+              excerpt:
+                type: string
+                maxLength: 240
+    Result:
+      type: object
+      properties:
+        id: *a22
+        text: *a19
+        languageCode: *a20
+        date: *a23
+        product: *a24
+        source: *a25
+        sentiment:
+          type: string
+        sentimentScore: *a21
+        entities:
+          type: array
+          items:
+            $ref: "#/components/schemas/Entity"
+        entitiesTruncated:
+          type: boolean
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+        insightsError:
+          type: object
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+    Summary:
+      type: object
+      properties:
+        total:
+          type: integer
+        analyzed:
+          type: integer
+        failed:
+          type: integer
+        insightFailures:
+          type: integer
+        counts:
+          type: object
+          additionalProperties:
+            type: integer
+        negativeRate:
+          type: number
+          nullable: true
+        trends:
+          type: array
+          items:
+            type: object
+            properties:
+              date:
+                type: string
+                format: date
+              total:
+                type: integer
+              negative:
+                type: integer
+              negativeRate:
+                type: number
+        concerns:
+          type: array
+          items:
+            type: object
+            properties:
+              text:
+                type: string
+              records:
+                type: integer
+              negative:
+                type: integer
+              evidence:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    recordId:
+                      type: string
+                    sentiment:
+                      type: string
+                    excerpt:
+                      type: string
+    Job:
+      type: object
+      properties:
+        jobId:
+          type: string
+        label:
+          type: string
+        status:
+          type: string
+          enum:
+            - QUEUED
+            - RUNNING
+            - COMPLETED
+            - COMPLETED_WITH_ERRORS
+            - FAILED
+        total:
+          type: integer
+        processed:
+          type: integer
+        progress:
+          type: integer
+        targeted:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+        summary:
+          $ref: "#/components/schemas/Summary"
+        failureReason:
+          type: string
+    Results:
+      type: object
+      properties:
+        job:
+          $ref: "#/components/schemas/Job"
+        records:
+          type: array
+          items:
+            $ref: "#/components/schemas/Result"
+        totalMatched:
+          type: integer
+        nextOffset:
+          type: integer
+          nullable: true
+    Report:
+      allOf:
+        - $ref: "#/components/schemas/Summary"
+        - type: object
+          properties:
+            job:
+              $ref: "#/components/schemas/Job"
+    Export:
       type: object
       required:
-        - error
+        - downloadUrl
+        - expiresInSeconds
+        - recordCount
+        - format
       properties:
-        error:
+        downloadUrl:
           type: string
+          format: uri
+        expiresInSeconds:
+          type: integer
+        recordCount:
+          type: integer
+        format:
+          type: string
+          enum:
+            - csv
+            - json
+    History:
+      type: object
+      properties:
+        jobs:
+          type: array
+          items:
+            $ref: "#/components/schemas/Job"
+        nextCursor:
+          type: string
+          nullable: true
+    Comparison:
+      type: object
+      properties:
+        currentJobId:
+          type: string
+        baselineJobId:
+          type: string
+        current:
+          $ref: "#/components/schemas/Summary"
+        baseline:
+          $ref: "#/components/schemas/Summary"
+        analyzedChange:
+          type: integer
+        negativeRateChange:
+          type: number
+          nullable: true
+        note:
+          type: string
+    Usage:
+      type: object
+      properties:
+        date:
+          type: string
+          format: date
+        units:
+          type: integer
+        limit:
+          type: integer
+        unit:
+          type: string
+        resetsAt:
+          type: string
+          format: date-time
+    AlertRule:
+      type: object
+      required:
+        - enabled
+        - minRecords
+        - negativeRate
+      properties:
+        enabled:
+          type: boolean
+        minRecords:
+          type: integer
+          minimum: 1
+          maximum: 200
+        negativeRate:
+          type: number
+          minimum: 0
+          maximum: 1
+        filters:
+          type: object
+          properties:
+            sentiment: *a26
+            product: *a27
+            source: *a28
+            languageCode: *a29
+            from: *a30
+            to: *a31
+            minConfidence: *a32
+    Alerts:
+      type: object
+      properties:
+        nextCursor:
+          type: string
+          nullable: true
+        alerts:
+          type: array
+          items:
+            type: object
+            properties:
+              jobId:
+                type: string
+              createdAt:
+                type: string
+                format: date-time
+              acknowledged:
+                type: boolean
+              type:
+                type: string
+              message:
+                type: string
+              analyzed:
+                type: integer
+              negativeRate:
+                type: number
+              threshold:
+                type: number
+              evidenceRecordIds:
+                type: array
+                items:
+                  type: string

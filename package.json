@@ -1,14 +1,32 @@
 {
   "name": "sentiment-analysis-lambda",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
   "description": "AWS Lambda sentiment analysis API backed by Amazon Comprehend",
   "scripts": {
-    "lint": "node --check lambda_function/handler.js && node --check tests/handler.test.js && node --check scripts/smoke-test.mjs",
-    "test": "node --test tests/handler.test.js",
-    "smoke": "node scripts/smoke-test.mjs"
+    "lint": "node scripts/lint.mjs",
+    "test": "node --test tests/*.test.js",
+    "build": "node scripts/build.mjs",
+    "smoke": "node scripts/smoke-test.mjs",
+    "client": "node scripts/cli.mjs"
   },
   "engines": {
     "node": ">=24"
+  },
+  "dependencies": {
+    "@aws-crypto/sha256-js": "5.2.0",
+    "@aws-sdk/client-comprehend": "3.1146.0",
+    "@aws-sdk/client-dynamodb": "3.1146.0",
+    "@aws-sdk/client-s3": "3.1146.0",
+    "@aws-sdk/client-sqs": "3.1146.0",
+    "@aws-sdk/credential-provider-node": "3.972.84",
+    "@aws-sdk/lib-dynamodb": "3.1146.0",
+    "@aws-sdk/s3-request-presigner": "3.1146.0",
+    "@smithy/protocol-http": "5.6.2",
+    "@smithy/signature-v4": "5.7.4"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2",
+    "yaml": "2.9.1"
   }
 }

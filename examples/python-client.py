@@ -1,24 +1,19 @@
+"""Signed example. Install boto3 and set API_ENDPOINT/AWS_REGION or a profile."""
 import json
 import os
 import sys
-from urllib import request, error
+import urllib.request
+import boto3
+from botocore.auth import SigV4Auth
+from botocore.awsrequest import AWSRequest
 
-endpoint = os.environ.get("API_ENDPOINT")
-if not endpoint:
-    raise SystemExit("Set API_ENDPOINT to the Terraform api_endpoint_url output.")
-
-text = " ".join(sys.argv[1:]) or "This integration works well."
-payload = json.dumps({"text": text, "languageCode": "en"}).encode("utf-8")
-req = request.Request(
-    endpoint,
-    data=payload,
-    headers={"Content-Type": "application/json"},
-    method="POST",
-)
-
-try:
-    with request.urlopen(req, timeout=15) as response:
-        print(json.dumps(json.load(response), indent=2))
-except error.HTTPError as exc:
-    body = exc.read().decode("utf-8")
-    raise SystemExit(f"Sentiment API returned {exc.code}: {body}") from exc
+session = boto3.Session()
+endpoint = os.environ['API_ENDPOINT'].rstrip('/').removesuffix('/analyze-sentiment')
+body = json.dumps({'text': ' '.join(sys.argv[1:]) or 'This service works well.'}).encode()
+request = AWSRequest(method='POST', url=endpoint + '/analyze-sentiment', data=body,
+                     headers={'Content-Type': 'application/json'})
+SigV4Auth(session.get_credentials().get_frozen_credentials(), 'execute-api',
+          session.region_name or 'us-east-1').add_auth(request)
+http = urllib.request.Request(request.url, data=body, headers=dict(request.headers), method='POST')
+with urllib.request.urlopen(http, timeout=35) as response:
+    print(response.read().decode())

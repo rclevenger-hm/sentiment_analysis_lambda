@@ -1,97 +1,77 @@
 name: Deploy to AWS
-
 on:
   workflow_dispatch:
     inputs:
       aws_region:
-        description: AWS region
+        description: AWS deployment region
         required: true
         default: us-east-1
         type: string
       stage_name:
-        description: API Gateway stage
+        description: Isolated deployment environment
         required: true
-        default: prod
-        type: string
-      cors_allowed_origin:
-        description: Browser origin allowed by CORS (* or https://your-app.example)
-        required: true
-        default: '*'
-        type: string
-
+        default: dev
+        type: choice
+        options: [dev, staging, prod]
 permissions:
   contents: read
   id-token: write
-
+concurrency:
+  group: deploy-${{ inputs.aws_region }}-${{ inputs.stage_name }}
+  cancel-in-progress: false
 jobs:
   deploy:
     name: Terraform apply and smoke test
     runs-on: ubuntu-latest
+    environment: ${{ inputs.stage_name }}
+    timeout-minutes: 30
+    env:
+      TF_IN_AUTOMATION: 'true'
+      TF_VAR_aws_region: ${{ inputs.aws_region }}
+      TF_VAR_stage_name: ${{ inputs.stage_name }}
+      TF_VAR_cors_allowed_origin: ${{ vars.CORS_ALLOWED_ORIGIN || '*' }}
+      TF_VAR_notification_email: ${{ vars.NOTIFICATION_EMAIL }}
+      TF_VAR_monthly_budget_usd: ${{ vars.MONTHLY_BUDGET_USD || '50' }}
+      STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+      STATE_REGION: ${{ vars.TF_STATE_REGION || inputs.aws_region }}
+      DEPLOY_ROLE: ${{ vars.AWS_ROLE_TO_ASSUME }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: '24'
-
-      - name: Test Lambda
-        run: npm test
-
-      - name: Configure AWS credentials with OIDC
-        if: ${{ vars.AWS_ROLE_TO_ASSUME != '' }}
-        uses: aws-actions/configure-aws-credentials@v4
+          cache: npm
+      - name: Require deployment settings
+        run: |
+          test -n "$STATE_BUCKET" || { echo 'Set TF_STATE_BUCKET'; exit 1; }
+          test -n "$DEPLOY_ROLE" || { echo 'Set AWS_ROLE_TO_ASSUME'; exit 1; }
+          test -n "$TF_VAR_notification_email" || { echo 'Set NOTIFICATION_EMAIL'; exit 1; }
+      - run: npm ci
+      - run: npm run lint && npm test && npm run build
+      - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_TO_ASSUME }}
           aws-region: ${{ inputs.aws_region }}
-
-      - name: Configure AWS credentials with access keys
-        if: ${{ vars.AWS_ROLE_TO_ASSUME == '' }}
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ inputs.aws_region }}
-
-      - name: Warn when using long-lived AWS credentials
-        if: ${{ vars.AWS_ROLE_TO_ASSUME == '' }}
-        run: echo '::warning::AWS_ROLE_TO_ASSUME is not configured; deployment is using long-lived repository secrets. Prefer GitHub OIDC for production deployments.'
-
-      - name: Set up Terraform
-        uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: '1.13.3'
           terraform_wrapper: false
-
-      - name: Terraform init
-        run: terraform -chdir=terraform init
-
-      - name: Terraform validate
-        run: terraform -chdir=terraform validate
-
-      - name: Terraform apply
+      - name: Initialize persistent environment state
         run: >-
-          terraform -chdir=terraform apply -auto-approve
-          -var="aws_region=${{ inputs.aws_region }}"
-          -var="stage_name=${{ inputs.stage_name }}"
-          -var="cors_allowed_origin=${{ inputs.cors_allowed_origin }}"
-
-      - name: Capture deployed endpoint
-        id: endpoint
-        run: echo "url=$(terraform -chdir=terraform output -raw api_endpoint_url)" >> "$GITHUB_OUTPUT"
-
-      - name: Smoke test deployed API
+          terraform -chdir=terraform init -input=false -lockfile=readonly
+          -backend-config="bucket=$STATE_BUCKET"
+          -backend-config="region=$STATE_REGION"
+          -backend-config="key=sentiment-analysis/$TF_VAR_aws_region/$TF_VAR_stage_name/terraform.tfstate"
+      - run: terraform -chdir=terraform validate
+      - name: Plan
+        run: terraform -chdir=terraform plan -input=false -lock-timeout=5m -out=release.tfplan
+      - name: Apply saved plan
+        run: terraform -chdir=terraform apply -input=false -lock-timeout=5m release.tfplan
+      - name: Authenticated smoke test
         env:
-          API_ENDPOINT: ${{ steps.endpoint.outputs.url }}
-        run: npm run smoke
-
-      - name: Deployment summary
-        env:
-          API_ENDPOINT: ${{ steps.endpoint.outputs.url }}
+          AWS_REGION: ${{ inputs.aws_region }}
         run: |
-          echo "## Sentiment API deployment" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Endpoint: \`$API_ENDPOINT\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "Deployment and live Comprehend smoke test passed." >> "$GITHUB_STEP_SUMMARY"
+          export API_ENDPOINT="$(terraform -chdir=terraform output -raw api_base_url)"
+          npm run smoke
+          echo "Deployment and authenticated single-request smoke test passed." >> "$GITHUB_STEP_SUMMARY"
+          echo "Endpoint: $API_ENDPOINT" >> "$GITHUB_STEP_SUMMARY"
