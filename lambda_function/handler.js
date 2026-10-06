@@ -55,14 +55,20 @@ function createHandler({ store, analyzer, clock = () => new Date(), logger = con
         if (!existing) {
           const units = payload.records.filter((record) => !record.error).length * (payload.targeted ? 2 : 1);
           const usage = await store.usage(tenantId);
-          if (usage.units + units > usage.limit) throw new HttpError(429, 'DAILY_LIMIT_EXCEEDED', 'Daily analysis allowance exceeded; resets at 00:00 UTC');
-          const inputKey = `${tenantId}/jobs/${id}/input-${fingerprint}.json`;
-          await store.putObject(inputKey, payload);
-          const time = clock().toISOString();
-          const job = { tenantId, key: `JOB#${id}`, jobId: id, fingerprint, inputKey,
-            collectionId: `${tenantId}#jobs`, createdAt: time, updatedAt: time, expiresAt: store.expiry(),
-            status: 'QUEUED', offset: 0, total: payload.records.length, targeted: payload.targeted, label: payload.label };
-          existing = (await store.createJob(job, units)).job;
+          if (usage.units + units > usage.limit) {
+            // Another submission with this key may have committed since the first read.
+            existing = await store.get(tenantId, `JOB#${id}`);
+            if (!existing) throw new HttpError(429, 'DAILY_LIMIT_EXCEEDED', 'Daily analysis allowance exceeded; resets at 00:00 UTC');
+          }
+          if (!existing) {
+            const inputKey = `${tenantId}/jobs/${id}/input-${fingerprint}.json`;
+            await store.putObject(inputKey, payload);
+            const time = clock().toISOString();
+            const job = { tenantId, key: `JOB#${id}`, jobId: id, fingerprint, inputKey,
+              collectionId: `${tenantId}#jobs`, createdAt: time, updatedAt: time, expiresAt: store.expiry(),
+              status: 'QUEUED', offset: 0, total: payload.records.length, targeted: payload.targeted, label: payload.label };
+            existing = (await store.createJob(job, units)).job;
+          }
         }
         if (existing.fingerprint !== fingerprint) throw new HttpError(409, 'IDEMPOTENCY_CONFLICT', 'This Idempotency-Key was already used with different data');
         if (!final(existing.status)) await store.enqueue(tenantId, id);

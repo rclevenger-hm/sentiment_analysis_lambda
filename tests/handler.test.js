@@ -115,3 +115,13 @@ test('unsupported media type and duplicate ids are rejected before reserving usa
   const b = await f.api(event('POST', '/jobs', { records: [{ id: 'same', text: 'a' }, { id: 'same', text: 'b' }] }));
   assert.equal(b.statusCode, 400); assert.equal(f.items.size, 0);
 });
+
+test('a duplicate racing with the last available quota unit still returns its existing job', async () => {
+  const f = fixture(1); const request = event('POST', '/jobs', { records: [{ text: 'good' }] });
+  const first = parsed(await f.api(request)); const originalGet = f.store.get.bind(f.store);
+  let reads = 0;
+  f.store.get = async (tenant, key) => key.startsWith('JOB#') && reads++ === 0 ? null : originalGet(tenant, key);
+  const duplicate = await f.api(request);
+  assert.equal(duplicate.statusCode, 202); assert.equal(parsed(duplicate).jobId, first.jobId);
+  assert.equal((await f.store.usage(tenantFrom(request))).units, 1);
+});
