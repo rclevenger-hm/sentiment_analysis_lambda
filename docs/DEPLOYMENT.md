@@ -1,106 +1,64 @@
-# Deployment guide
+# Deployment and migration
 
-This guide takes the service from a fresh AWS account/credential set to a live API endpoint.
+Requirements: Terraform 1.10+ (CI uses 1.13.3), Node.js 24+, an AWS account, and a deployment identity allowed to manage this stack. Production deployment uses GitHub OIDC. No AWS resources are created by pull-request CI.
 
-## What gets created
+## 1. Persistent state
 
-Terraform creates:
-
-- an IAM execution role for the Lambda function;
-- a policy allowing only `comprehend:DetectSentiment` for the Lambda workload;
-- a CloudWatch Logs group with configurable retention;
-- a Node.js 24 Lambda function;
-- an API Gateway REST API with `POST /analyze-sentiment`;
-- an API Gateway `OPTIONS` method for browser CORS preflight;
-- permission for API Gateway to invoke the Lambda function;
-- an API Gateway deployment and stage.
-
-Amazon Comprehend itself is a managed AWS API and does not need a separate Terraform resource. The Lambda calls Comprehend using its IAM role; there is no Comprehend API key to create or store.
-
-## Prerequisites
-
-Install:
-
-- AWS CLI v2;
-- Terraform 1.6+;
-- Node.js 24+ for tests and smoke tests;
-- Docker only if you want local Lambda-container execution.
-
-Configure AWS credentials using your normal AWS mechanism. For example:
+Use an existing private, encrypted, versioned S3 bucket, or create one once:
 
 ```bash
-aws configure
-aws sts get-caller-identity
+terraform -chdir=terraform/bootstrap init
+terraform -chdir=terraform/bootstrap apply -var='state_bucket_name=YOUR_UNIQUE_BUCKET'
 ```
 
-The identity running Terraform must be able to manage the resources above: IAM roles/policies, Lambda, API Gateway, and CloudWatch Logs. In an organization, use an approved deployment role rather than a personal long-lived access key.
+The bootstrap bucket is protected against destruction and has TLS enforcement, encryption, public-access blocking, and versioning. Its first apply uses local state. Preserve that bootstrap state; after creation, add `terraform/bootstrap/backend.tf` with `terraform { backend "s3" {} }` and migrate it using `init -migrate-state` to a separate key such as `bootstrap/state-bucket.tfstate` in the bucket. The environment backend must use a different key. Never commit state or credentials.
 
-## Deploy locally with Terraform
-
-From the repository root:
+For the application:
 
 ```bash
+npm ci
+npm run build
+cp terraform/backend.hcl.example terraform/backend.hcl
 cp terraform/terraform.tfvars.example terraform/terraform.tfvars
+# Edit both files for your account, environment, origin, and notification recipient.
+terraform -chdir=terraform init -backend-config=backend.hcl
+terraform -chdir=terraform plan -out=release.tfplan
+terraform -chdir=terraform apply release.tfplan
 ```
 
-Edit `terraform/terraform.tfvars` for your environment. For a browser-facing production app, replace the wildcard CORS origin with the exact application origin:
+The S3 backend enables encryption and native lockfiles. The deployment role needs ListBucket for its prefix; GetObject/PutObject for the state object; and GetObject/PutObject/DeleteObject for the `.tflock` object. Do not disable locking to resolve contention. Use a unique key per region and environment, for example `sentiment-analysis/us-east-1/dev/terraform.tfstate`.
 
-```hcl
-aws_region          = "us-east-1"
-project_name        = "sentiment-analysis"
-stage_name          = "prod"
-cors_allowed_origin = "https://app.example.com"
-log_retention_days  = 14
-```
+### Existing deployments
 
-Then:
+Back up the **current authoritative state** first. Run `terraform init -migrate-state -backend-config=backend.hcl` from the directory holding that state, then review a plan against the existing environment. Set `stage_name` explicitly: the new default is `dev`; old versions defaulted to `prod`. Do not change stage or project names during migration.
 
-```bash
-npm test
-terraform -chdir=terraform init
-terraform -chdir=terraform fmt -check
-terraform -chdir=terraform validate
-terraform -chdir=terraform plan
-terraform -chdir=terraform apply
-```
+If earlier ephemeral runs lost the state, stop and recover it from the original machine/backups or import the existing resources. A fresh apply does not discover or adopt existing resources. Review the provider upgrade and the full plan before applying. The old single-request route keeps its Terraform address but switches to IAM authentication.
 
-Get the endpoint:
+## 2. GitHub Actions
 
-```bash
-terraform -chdir=terraform output -raw api_endpoint_url
-```
+Create GitHub environments `dev`, `staging`, and `prod` as needed. Configure each environment's variables:
 
-Run a live end-to-end test through API Gateway, Lambda, and Comprehend:
+| Variable | Purpose |
+| --- | --- |
+| `AWS_ROLE_TO_ASSUME` | Deployment role ARN trusted through GitHub OIDC |
+| `TF_STATE_BUCKET` | Existing versioned state bucket |
+| `TF_STATE_REGION` | Bucket region; defaults to the selected deployment region |
+| `NOTIFICATION_EMAIL` | Operator for CloudWatch and budget alerts |
+| `CORS_ALLOWED_ORIGIN` | Browser origin; defaults to `*` |
+| `MONTHLY_BUDGET_USD` | Account-wide monthly budget alert amount; defaults to 50 |
 
-```bash
-API_ENDPOINT="$(terraform -chdir=terraform output -raw api_endpoint_url)" npm run smoke
-```
+The workflow uses the selected GitHub environment, passes inputs through environment variables, serializes deployments by region/stage, initializes the persistent backend, saves a plan, and applies that exact plan. It has no access-key fallback. Configure production environment protection/review rules and an appropriate deployment branch policy in GitHub. The workflow itself cannot enforce repository settings.
 
-## Deploy from GitHub Actions
+See [AWS_OIDC.md](AWS_OIDC.md) for the trust boundary. The deployment role also needs permission to invoke the deployed API for the authenticated smoke test.
 
-The repository includes the manual `Deploy to AWS` workflow.
+## 3. Consumers and notifications
 
-For the current access-key workflow, add these GitHub repository secrets:
+Retrieve `consumer_invoke_policy` from Terraform and attach it to a dedicated consumer role. Sessions of the same role share one tenant; different customers must use different roles. Do not give consumers Lambda, S3, DynamoDB, or deployment permissions.
 
-- `AWS_ACCESS_KEY_ID`
-- `AWS_SECRET_ACCESS_KEY`
+Confirm the SNS subscription sent to `notification_email`. Infrastructure alarms and budget notifications are provisioned, but email delivery is not active until confirmed. The budget monitors total account spending, across environments; it is an alert and does not halt spending. Sentiment thresholds are separate per-caller API alert feeds.
 
-Open **Actions -> Deploy to AWS -> Run workflow**, then select the region, stage, and allowed CORS origin. The workflow runs tests, applies Terraform, retrieves the deployed endpoint, and performs a live Comprehend smoke test. The endpoint is written to the workflow summary.
+Run `API_ENDPOINT="$(terraform -chdir=terraform output -raw api_base_url)" npm run smoke` with an authorized identity. Full deployment/resilience/rollback proof is deferred to [#12](https://github.com/rclevenger-hm/sentiment_analysis_lambda/issues/12).
 
-For a production organization, prefer GitHub Actions OIDC with an AWS deployment role instead of long-lived AWS access keys. That requires an AWS IAM OIDC provider/trust policy specific to your GitHub repository and is intentionally not auto-created here because the trust boundary is account-specific.
+## Cleanup
 
-## CORS
-
-`cors_allowed_origin = "*"` is convenient for development. For a production browser application, set it to the exact origin, for example `https://app.example.com`.
-
-CORS is not authentication. The API is unauthenticated by default, so any caller who knows the endpoint can invoke it.
-
-## Destroy the environment
-
-Use the same variables that were used during apply:
-
-```bash
-terraform -chdir=terraform destroy
-```
-
-Review the destroy plan before approving it.
+Use the same backend and variables. Production DynamoDB deletion protection must be deliberately disabled before teardown. The private data bucket is not force-destroyed: archive/delete its objects deliberately first. Retain state bucket version history and protect bootstrap state; the bootstrap bucket has `prevent_destroy`. Review the destroy plan and any retained resources/costs.

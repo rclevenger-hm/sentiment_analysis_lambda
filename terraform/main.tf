@@ -1,14 +1,19 @@
 terraform {
-  required_version = ">= 1.6.0"
+  required_version = ">= 1.10.0, < 2.0.0"
+
+  backend "s3" {
+    encrypt      = true
+    use_lockfile = true
+  }
 
   required_providers {
     archive = {
       source  = "hashicorp/archive"
-      version = ">= 2.4.0"
+      version = "~> 2.7"
     }
     aws = {
       source  = "hashicorp/aws"
-      version = ">= 5.0"
+      version = "~> 6.0"
     }
   }
 }
@@ -29,7 +34,7 @@ locals {
 
 data "archive_file" "lambda" {
   type        = "zip"
-  source_file = "${path.module}/../lambda_function/handler.js"
+  source_dir  = "${path.module}/../dist"
   output_path = "${path.module}/lambda_function.zip"
 }
 
@@ -65,7 +70,7 @@ resource "aws_iam_role_policy" "comprehend" {
     Version = "2012-10-17"
     Statement = [
       {
-        Action   = "comprehend:DetectSentiment"
+        Action   = ["comprehend:DetectSentiment", "comprehend:DetectTargetedSentiment"]
         Effect   = "Allow"
         Resource = "*"
       }
@@ -81,25 +86,25 @@ resource "aws_cloudwatch_log_group" "lambda" {
 }
 
 resource "aws_lambda_function" "sentiment" {
-  function_name    = local.name
-  description      = "Analyzes text sentiment with Amazon Comprehend"
-  filename         = data.archive_file.lambda.output_path
-  source_code_hash = data.archive_file.lambda.output_base64sha256
-  handler          = "handler.analyzeSentiment"
-  role             = aws_iam_role.lambda.arn
-  runtime          = "nodejs24.x"
-  memory_size      = 256
-  timeout          = 10
+  function_name                  = local.name
+  description                    = "Analyzes text sentiment with Amazon Comprehend"
+  filename                       = data.archive_file.lambda.output_path
+  source_code_hash               = data.archive_file.lambda.output_base64sha256
+  handler                        = "handler.analyzeSentiment"
+  role                           = aws_iam_role.lambda.arn
+  runtime                        = "nodejs24.x"
+  memory_size                    = 512
+  reserved_concurrent_executions = var.api_concurrency
+  timeout                        = 28
 
   environment {
-    variables = {
-      ALLOWED_ORIGIN = var.cors_allowed_origin
-    }
+    variables = local.runtime_environment
   }
 
   depends_on = [
     aws_cloudwatch_log_group.lambda,
     aws_iam_role_policy.comprehend,
+    aws_iam_role_policy.api_storage,
     aws_iam_role_policy_attachment.lambda_basic_execution,
   ]
 
@@ -123,7 +128,7 @@ resource "aws_api_gateway_method" "post" {
   rest_api_id   = aws_api_gateway_rest_api.sentiment.id
   resource_id   = aws_api_gateway_resource.analyze_sentiment.id
   http_method   = "POST"
-  authorization = "NONE"
+  authorization = "AWS_IAM"
 }
 
 resource "aws_api_gateway_integration" "lambda" {
@@ -173,7 +178,7 @@ resource "aws_api_gateway_integration_response" "options" {
   status_code = aws_api_gateway_method_response.options.status_code
 
   response_parameters = {
-    "method.response.header.Access-Control-Allow-Headers" = "'Content-Type'"
+    "method.response.header.Access-Control-Allow-Headers" = "'Content-Type,Authorization,X-Amz-Date,X-Amz-Security-Token,X-Amz-Content-Sha256,Idempotency-Key'"
     "method.response.header.Access-Control-Allow-Methods" = "'OPTIONS,POST'"
     "method.response.header.Access-Control-Allow-Origin"  = "'${var.cors_allowed_origin}'"
   }
@@ -186,7 +191,7 @@ resource "aws_lambda_permission" "api_gateway" {
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.sentiment.function_name
   principal     = "apigateway.amazonaws.com"
-  source_arn    = "${aws_api_gateway_rest_api.sentiment.execution_arn}/*/*"
+  source_arn    = "${aws_api_gateway_rest_api.sentiment.execution_arn}/${var.stage_name}/*/*"
 }
 
 resource "aws_api_gateway_deployment" "sentiment" {
@@ -200,6 +205,9 @@ resource "aws_api_gateway_deployment" "sentiment" {
       options_method_id      = aws_api_gateway_method.options.id
       options_integration_id = aws_api_gateway_integration.options.id
       cors_allowed_origin    = var.cors_allowed_origin
+      authorization          = aws_api_gateway_method.post.authorization
+      proxy                  = aws_api_gateway_integration.proxy
+      gateway_responses      = aws_api_gateway_gateway_response.cors
     }))
   }
 
@@ -210,6 +218,7 @@ resource "aws_api_gateway_deployment" "sentiment" {
   depends_on = [
     aws_api_gateway_integration.lambda,
     aws_api_gateway_integration_response.options,
+    aws_api_gateway_integration_response.proxy_options,
   ]
 }
 
@@ -220,3 +229,4 @@ resource "aws_api_gateway_stage" "sentiment" {
 
   tags = local.common_tags
 }
+

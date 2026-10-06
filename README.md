@@ -1,131 +1,81 @@
-# AWS Lambda Sentiment Analysis
+# Sentiment Analysis Service
 
-A deployable serverless sentiment-analysis API built with Amazon API Gateway, AWS Lambda, and Amazon Comprehend. It accepts text over HTTPS and returns the overall sentiment plus Comprehend confidence scores.
+An authenticated AWS service for analyzing individual text and collections of customer feedback. Upload CSV or JSON, track background jobs, inspect overall and entity-level sentiment, filter results, compare datasets, export files, and configure negative-feedback alerts.
 
-```text
-client -> API Gateway -> Lambda -> Amazon Comprehend
-                         |
-                         -> CloudWatch Logs
+## What it does
+
+- **Single analysis:** `POST /analyze-sentiment` returns positive, negative, neutral, or mixed sentiment and confidence scores.
+- **Bulk jobs:** up to 200 records / 1 MiB per upload, processed in resumable batches of 25 with stable IDs and per-record errors.
+- **Targeted insights:** optional English entity-level sentiment, source offsets, and excerpts. Returns bounded evidence and explicit truncation flags, not generated explanations.
+- **History and reports:** caller-scoped job history, progress, source/product/date/sentiment/confidence filters, daily trends, and two-job comparisons.
+- **Exports:** CSV or JSON downloads through S3 URLs that expire after 60 seconds. CSV formula cells are neutralized for spreadsheets.
+- **Alerts:** one configurable negative-rate rule per caller, a persistent alert feed, evidence record IDs, and acknowledgement.
+- **Controls:** IAM/SigV4 on every application route, atomic daily allowances, API Gateway throttling, bounded Lambda concurrency, retention, CloudWatch alarms, and account-wide budget notifications.
+
+```mermaid
+flowchart TD
+  Client[Signed client] --> API[API Gateway]
+  API --> Lambda[Request handler]
+  Lambda --> Comprehend[Amazon Comprehend]
+  Lambda --> Store[DynamoDB and private S3]
+  Lambda --> Queue[SQS]
+  Queue --> Worker[Batch worker]
+  Worker --> Comprehend
+  Worker --> Store
+  Recovery[Scheduled recovery] --> Worker
 ```
 
-Terraform provisions the complete AWS path: IAM permissions, log group, Lambda, API Gateway route, CORS preflight, deployment, and stage. Amazon Comprehend is a managed AWS API, so there is no separate Comprehend server, model, database, or API key to configure.
+## Try it after deployment
 
-## Quick start
-
-Requirements: AWS credentials, Terraform 1.6+, and Node.js 24+.
+Node.js 24+, AWS credentials for a dedicated consumer IAM role, and `execute-api:Invoke` permission are required. The CLI uses the normal AWS credential chain, including profiles and temporary role credentials.
 
 ```bash
-aws sts get-caller-identity
+npm ci
+export AWS_REGION=us-east-1
+export API_ENDPOINT=https://API_ID.execute-api.us-east-1.amazonaws.com/dev
+npm run client -- analyze 'The product is good, but delivery was late.' --targeted
+npm run client -- submit examples/feedback.csv --targeted --key feedback-october-01
+npm run client -- status JOB_ID
+npm run client -- results JOB_ID --sentiment NEGATIVE
+npm run client -- report JOB_ID --product widget
+npm run client -- export JOB_ID --format csv --out results.csv
+npm run client -- history
+npm run client -- compare CURRENT_JOB_ID BASELINE_JOB_ID
+npm run client -- rule examples/alert-rule.json
+npm run client -- alerts
+npm run client -- usage
+```
+
+Keep the printed idempotency key when retrying an upload. Repeat submissions with the same key and data reuse the job and do not reserve allowance twice. Changing the payload under the same key returns `409`. A new key deliberately starts new work.
+
+Single requests are synchronous and stateless apart from usage metering. Submit a one-record job when you need retained history and alerts. Alerts are an API feed, not outbound email or arbitrary webhooks; the notification email configured during deployment receives infrastructure and budget alarms.
+
+## Development and deployment
+
+```bash
+npm ci
+npm run lint
 npm test
-terraform -chdir=terraform init
-terraform -chdir=terraform plan
-terraform -chdir=terraform apply
+npm run build
+terraform -chdir=terraform init -backend=false
+terraform -chdir=terraform validate
+terraform -chdir=terraform test
 ```
 
-Terraform prints the live endpoint as `api_endpoint_url`. Verify the entire deployed chain with a real Comprehend request:
+For a real deployment, follow the [deployment guide](docs/DEPLOYMENT.md) to bootstrap or select a versioned state bucket, configure an OIDC deployment role, and initialize the environment's remote backend. Never apply against a fresh empty state if this service already exists.
 
-```bash
-API_ENDPOINT="$(terraform -chdir=terraform output -raw api_endpoint_url)" npm run smoke
-```
-
-Or call it directly:
-
-```bash
-curl -sS -X POST \
-  -H 'Content-Type: application/json' \
-  -d '{"text":"I love this product!","languageCode":"en"}' \
-  "$(terraform -chdir=terraform output -raw api_endpoint_url)"
-```
-
-Example response:
-
-```json
-{
-  "sentiment": "POSITIVE",
-  "sentimentScore": {
-    "Positive": 0.99,
-    "Negative": 0.001,
-    "Neutral": 0.009,
-    "Mixed": 0
-  }
-}
-```
+**Version 2 changes:** application endpoints now require IAM authentication; deployments require remote state, OIDC, and a notification email. Existing unauthenticated clients need signed requests. SDK dependencies are pinned and bundled with the Lambda artifact.
 
 ## Documentation
 
-- [Deployment guide](docs/DEPLOYMENT.md) — AWS prerequisites, Terraform, GitHub Actions, CORS, and teardown.
-- [API reference](docs/API.md) — request/response contract, languages, limits, errors, and OpenAPI.
-- [Integration guide](docs/INTEGRATION.md) — Node.js, Python, browser, Postman, AWS-to-AWS, and production authentication options.
-- [Operations guide](docs/OPERATIONS.md) — smoke tests, CloudWatch logs, troubleshooting, security, and cost considerations.
-- [OpenAPI contract](openapi.yaml) — importable API definition for API tooling/client generation.
+- [API contract](docs/API.md) and [OpenAPI](openapi.yaml)
+- [Deployment and state migration](docs/DEPLOYMENT.md)
+- [GitHub OIDC setup](docs/AWS_OIDC.md)
+- [Integration and CLI](docs/INTEGRATION.md)
+- [Operations, retry behavior, and retention](docs/OPERATIONS.md)
+- [Security and tenant boundaries](docs/SECURITY.md)
+- [Version 2 release notes](docs/RELEASE_NOTES.md)
 
-Runnable clients are included in [`examples/`](examples/).
+Local tests exercise service behavior with substitutes for AWS. Live AWS deployment, repeated deployment, failure injection, notification delivery, and rollback verification remain tracked in [issue #12](https://github.com/rclevenger-hm/sentiment_analysis_lambda/issues/12).
 
-## Required AWS services
-
-| Service | Purpose | Configuration in this repo |
-| --- | --- | --- |
-| API Gateway | Public HTTPS endpoint | Terraform creates route, stage, CORS preflight, and Lambda integration |
-| Lambda | Validates input and calls Comprehend | Terraform deploys Node.js 24 handler |
-| Amazon Comprehend | Performs sentiment inference | Lambda IAM role calls `DetectSentiment`; no resource/API key to create |
-| IAM | Service-to-service authorization | Terraform creates Lambda role/policies |
-| CloudWatch Logs | Lambda runtime/error logs | Terraform creates log group with 14-day default retention |
-
-The public `POST` route is intentionally unauthenticated by default so a fresh deployment works immediately. See the integration guide before exposing it as a production public service.
-
-## Local tests
-
-The unit suite has no install step:
-
-```bash
-npm run lint
-npm test
-```
-
-It covers success, CORS behavior, language selection, malformed JSON, missing input, oversized input, unsupported language, and Comprehend failure handling.
-
-## Docker local Lambda runtime
-
-The image uses the official AWS Lambda Node.js base image.
-
-```bash
-docker compose up --build
-```
-
-Invoke it through the Lambda Runtime Interface Emulator:
-
-```bash
-curl -X POST \
-  -H 'Content-Type: application/json' \
-  -d '{"body":"{\"text\":\"I love this product!\"}"}' \
-  http://localhost:9000/2015-03-31/functions/function/invocations
-```
-
-A real Comprehend call from the local container requires AWS credentials with `comprehend:DetectSentiment`.
-
-## Browser use / CORS
-
-CORS preflight is provisioned automatically. Development defaults to `cors_allowed_origin = "*"`. For production browser clients, use the exact site origin:
-
-```bash
-terraform -chdir=terraform apply \
-  -var='cors_allowed_origin=https://app.example.com'
-```
-
-See [`examples/browser.html`](examples/browser.html) for a minimal browser client.
-
-## GitHub Actions
-
-`CI` runs JavaScript checks/tests, Terraform format/init/validate, and a Docker image build.
-
-`Deploy to AWS` is manually triggered and requires `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` repository secrets in its current form. It applies Terraform and then runs the live smoke test automatically. For production organizations, prefer GitHub Actions OIDC and an AWS deployment role; setup guidance is in the deployment guide.
-
-## Cleanup
-
-```bash
-terraform -chdir=terraform destroy
-```
-
-## License
-
-MIT. See [LICENSE](LICENSE).
+MIT licensed.

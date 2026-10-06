@@ -1,0 +1,3 @@
+bucket = "your-existing-versioned-state-bucket"
+region = "us-east-1"
+key    = "sentiment-analysis/us-east-1/dev/terraform.tfstate"

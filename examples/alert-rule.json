@@ -1,0 +1,1 @@
+{"enabled":true,"minRecords":5,"negativeRate":0.6,"filters":{"source":"support","minConfidence":0.7}}

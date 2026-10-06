@@ -1,58 +1,15 @@
 # Security model
 
-The default deployment is intentionally easy to exercise: API Gateway exposes the sentiment route without application authentication and Lambda calls Amazon Comprehend through IAM. That is appropriate for a demo/reference deployment, not a production Internet-facing trust boundary.
+All application routes use API Gateway `AWS_IAM`; only OPTIONS preflight is public. Clients sign with SigV4. CORS is a browser access policy and does not replace IAM. Gateway request throttling and reserved Lambda concurrency are configured, and admission limits reserve inference units atomically per principal/UTC day.
 
-## Trust boundaries
+The handler derives the tenant from API Gateway's authenticated IAM identity. It never accepts tenant IDs from request headers, body, paths, or filters. STS sessions of one role intentionally share a tenant, history, quota, and alert rule. Provision a dedicated IAM role per customer. A shared role does not provide isolation between its users. Principal unique IDs are preferred to prevent a recreated IAM identity inheriting prior data.
 
-```text
-untrusted client
-  -> API Gateway
-  -> Lambda input validation
-  -> IAM-authorized Comprehend call
-  -> managed AWS service
-```
+Consumers need only `execute-api:Invoke`. Direct invocation of the API Lambda is an administrative trust boundary: an identity with `lambda:InvokeFunction` can construct gateway-shaped events, so do not grant it to consumers. Likewise, the deployment and runtime roles must not be assumed by consumers. Worker invocations are restricted to the queue/scheduled service and administrators.
 
-Treat submitted text as potentially sensitive user data. Do not log full request bodies by default, and define data-classification/retention requirements before using the API for regulated or confidential content.
+Source text is persisted only for bulk jobs. Private S3 uses encryption, blocked public access and TLS-only policy. DynamoDB stores metadata, usage, summaries and alert rules, with encryption, retention and point-in-time recovery. Short-lived export URLs grant access to exactly one object for 60 seconds; they must be protected as bearer credentials. CloudWatch logs do not include feedback text. See operations documentation for physical retention and backups.
 
-## Production hardening priorities
+Input validation includes object shape, UTF-8/base64 correctness, byte limits, language types, record counts, metadata sizes, CSV structure and unique record IDs. CSV exports neutralize spreadsheet formula prefixes. SDKs are packaged from a lockfile; no secrets or raw AWS errors are returned in application responses.
 
-1. Require an authentication/authorization mechanism appropriate to the client: IAM/SigV4, JWT authorizer, Cognito, or another reviewed gateway authorizer.
-2. Replace wildcard CORS with the exact browser origin where browser access is required.
-3. Add API Gateway throttling/usage controls sized to both cost and Comprehend service quotas.
-4. Consider AWS WAF for public Internet deployments that require abuse filtering beyond gateway throttles.
-5. Keep Lambda IAM limited to the required Comprehend action and log permissions.
-6. Prefer GitHub Actions OIDC + a short-lived deployment role over long-lived AWS access-key repository secrets.
-7. Encrypt logs/state with the organization-required KMS controls when AWS defaults are insufficient.
-8. Set explicit CloudWatch retention and alarms for elevated 4xx/5xx, Lambda errors/throttles, and latency.
+The deployment workflow uses environment-scoped OIDC, persisted/locked Terraform state, per-environment concurrency and a saved plan. Configure GitHub environment branch restrictions and protection rules; account-specific trust and least-privilege policies still require live verification in issue #12.
 
-## CI/CD credential model
-
-The current manual deploy workflow supports long-lived `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` secrets. For a production repository, create a narrowly scoped AWS deployment role that trusts GitHub's OIDC provider and restrict the trust policy to this repository/ref or protected environment.
-
-The workflow should then request `id-token: write` and assume that role for the deployment job. Do not broaden the runtime Lambda role simply because the deployment role needs infrastructure permissions; those are separate trust boundaries.
-
-## Abuse and cost controls
-
-A public sentiment endpoint can be used to consume Lambda/API Gateway/Comprehend quota and cost. Authentication, request-size validation, rate limits, monitoring, and budget alarms should be designed together. A successful response is not evidence that a request should have been authorized.
-
-## Incident response
-
-If unexpected traffic or credential misuse is suspected:
-
-- disable or restrict the public route/authorizer first;
-- preserve API Gateway/Lambda/CloudTrail evidence;
-- rotate/revoke any exposed deployment credential;
-- inspect IAM changes and deployment history;
-- quantify Comprehend/API usage and cost impact;
-- restore service using the least-privilege reviewed configuration rather than relaxing controls to recover quickly.
-
-## Security regression checklist
-
-For changes touching Terraform, API Gateway, IAM, or CI:
-
-- no wildcard IAM actions/resources unless technically required and documented;
-- no committed AWS credentials or generated state containing secrets;
-- no request-body logging added casually;
-- CORS changes reviewed separately from authentication;
-- public-route changes called out explicitly in the PR;
-- Terraform plan and automated tests remain part of review before deployment.
+For an incident, restrict consumer invoke permissions or gateway access, preserve logs and state, inspect IAM/deployment history, and quantify usage before recovery. Do not relax IAM or disable locking to restore service. Keep sensitive customer text out of development fixtures.
