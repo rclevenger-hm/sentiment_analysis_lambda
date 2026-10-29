@@ -2,7 +2,8 @@
 
 const { ComprehendClient, DetectSentimentCommand, DetectTargetedSentimentCommand, BatchDetectSentimentCommand, BatchDetectTargetedSentimentCommand } = require('@aws-sdk/client-comprehend');
 const { SENTIMENTS, targetedEntities } = require('./insights');
-const transient = (error) => /Throttl|TooManyRequests|Internal|Unavailable|Timeout|Abort|Networking|ECONN|ETIMEDOUT/i.test(error?.name || error?.code || '') || error?.$metadata?.httpStatusCode >= 500;
+// Transport errors can keep the generic name "Error" while carrying a retryable code.
+const transient = (error) => [error?.name, error?.code].some((value) => /Throttl|TooManyRequests|Internal|Unavailable|Timeout|Abort|Networking|ECONN|ETIMEDOUT/i.test(value || '')) || error?.$metadata?.httpStatusCode >= 500;
 const safeError = (error) => ({ code: String(error?.name || error?.ErrorCode || 'ANALYSIS_FAILED').slice(0, 80), message: 'Analysis could not be completed for this record' });
 function scores(result) {
   if (!SENTIMENTS.has(result?.Sentiment) || !result.SentimentScore) throw Object.assign(new Error('Malformed upstream result'), { name: 'InvalidUpstreamResponse' });
