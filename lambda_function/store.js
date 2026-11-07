@@ -98,12 +98,14 @@ function createStore({ db, s3, sqs, config = process.env, clock = () => new Date
         ExpressionAttributeValues: { ':offset': offset, ':status': status, ':time': clock().toISOString(), ':token': job.leaseToken, ':previous': job.offset, ...(summary ? { ':summary': summary } : {}) } }));
     },
     async fail(tenantId, jobId) {
+      // A dead-letter message may predate a successful checkpoint. Only the
+      // current checkpoint's persisted attempt count can authorize failure.
       try {
         await db.send(new UpdateCommand({ TableName: table, Key: key(tenantId, `JOB#${jobId}`),
           UpdateExpression: 'SET #status = :failed, failureReason = :reason, updatedAt = :time REMOVE leaseToken, leaseUntil',
-          ConditionExpression: '(#status = :queued OR #status = :running) AND (attribute_not_exists(leaseUntil) OR leaseUntil < :now)',
+          ConditionExpression: '(#status = :queued OR #status = :running) AND (attribute_not_exists(leaseUntil) OR leaseUntil < :now) AND attempts >= :max',
           ExpressionAttributeNames: { '#status': 'status' },
-          ExpressionAttributeValues: { ':failed': 'FAILED', ':reason': 'Worker retry limit exceeded. Completed records remain available.', ':queued': 'QUEUED', ':running': 'RUNNING', ':time': clock().toISOString(), ':now': Math.floor(clock().getTime() / 1000) } }));
+          ExpressionAttributeValues: { ':max': 5, ':failed': 'FAILED', ':reason': 'Worker retry limit exceeded. Completed records remain available.', ':queued': 'QUEUED', ':running': 'RUNNING', ':time': clock().toISOString(), ':now': Math.floor(clock().getTime() / 1000) } }));
       } catch (error) { if (!conditional(error)) throw error; }
     },
     async results(job) {
